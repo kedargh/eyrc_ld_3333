@@ -52,9 +52,9 @@ class swift():
         # [x_setpoint, y_setpoint, z_setpoint]
         #self.setpoint = [11,-11,30] # whycon marker at the position of the dummy given in the scene. Make the whycon marker associated with position_to_hold dummy renderable and make changes accordingly
         self.bridge = CvBridge()
-        z = 28
+        z = 30
         self.setpoints = []
-        for i in range(1, 12):
+        for i in range(1, 11):
             y = i
             for x in range(i, -i - 1, -1):
                 self.setpoints.append([x, y, z])
@@ -165,116 +165,68 @@ class swift():
     def drone_cam(self,image):
         try:
           drone_ros_image = self.bridge.imgmsg_to_cv2(image, "bgr8")
+          self.led_detection(drone_ros_image)
         except CvBridgeError as e:
           print(e)
     
-        cv2.imshow("Image window", drone_ros_image)
+       # cv2.imshow("Image window", drone_ros_image)
+        
         cv2.waitKey(3)
 
     def led_detection(self,drone_ros_image):
-        # ----------------------------------------------------------------------------------------------------------
-
         # convert it to grayscale, and blur it
 
         grayimg = cv2.cvtColor(drone_ros_image, cv2.COLOR_BGR2GRAY)
         blurimg = cv2.GaussianBlur(grayimg, (3, 3), sigmaX=0, sigmaY=0)
-
-        # cv2.imshow("Blurred Image", blurimg)
-        # cv2.waitKey(2000)
-
-        # -----------------------------------------------------------------------------------------------------------
-
-        # threshold the image to reveal light regions in the blurred image
-
         _, thresholdimg = cv2.threshold(blurimg, 120, 255, cv2.THRESH_BINARY)
-
-        # cv2.imshow("th1", thresholdimg)
-        # cv2.waitKey(2000)
-
-        # ------------------------------------------------------------------------------------------------------------
-
         # perform a series of erosions and dilations to remove any small blobs of noise from the thresholded image
-
         kernel = np.ones((3, 3), np.uint8)
         erosionimg = cv2.erode(thresholdimg, kernel, iterations=2)
-
-        # cv2.imshow("Eroded Image", erosion)
-        # cv2.waitKey(2000)
-
         dilationimg = cv2.dilate(erosionimg, kernel, iterations=2)
-
-        # cv2.imshow("Eroded + Dilated Image", dilation)
-        # cv2.waitKey(2000)
-
-        # --------------------------------------------------------------------------------------------------------------
-
         # perform a connected component analysis on the thresholded image, then initialize a mask to store only the "large" components
-
         nos_Labels, label_id, val, centroid = cv2.connectedComponentsWithStats(thresholdimg, 4, cv2.CV_32S)
-
-        # ---------------------------------------------------------------------------------------------------------------
-
         # loop over the unique components
-
         output = np.zeros_like(grayimg, dtype="uint8")
-
         num_leds = 0
         # output = np.zeros_like(image_gray)
-
         for i in range(1, nos_Labels):
             area = val[i, cv2.CC_STAT_AREA]
-
             # if this is the background label (i.e., the largest component), ignore it
             if area > 600:
                 continue
-
             # otherwise, construct the label mask
             lableMask = (label_id == i).astype("uint8") * 255
-
             # Calculate the number of pixels in the component
             number_pixels = np.sum(lableMask) / 255
-            # print(number_pixels,end=" ")
-
-            # if the number of pixels in the component is sufficiently large, then add it to our mask of "large blobs"
-
             if area > 140 and area < 600:
                 large_blobs_mask = cv2.bitwise_or(output, lableMask)
                 num_leds += 1
-        # ---------------------------------------------------------------------------------------------------------------
-
         # find the contours in the mask, then sort them from left to right
-
         contours = cv2.findContours(dilationimg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         contours = imutils.grab_contours(contours)
-
         contours = sorted(contours, key=lambda c: cv2.boundingRect(c)[0])
-
-        # ----------------------------------------------------------------------------------------------
-
-        # Initialize lists to store centroid coordinates and area
-
         centroid_list = []
         area_list = []
-
         # ----------------------------------------------------------------------------------------------
         def calculate_two_point_centroid(vertex1, vertex2):
             x1, y1 = vertex1
             x2, y2 = vertex2
 
-            centroid_x = (x1 + x2) / 2.0
-            centroid_y = (y1 + y2) / 2.0
+            centroid_x1 = (x1 + x2) / 2.0
+            centroid_y1 = (y1 + y2) / 2.0
 
-            return (centroid_x, centroid_y)
+            return (centroid_x1, centroid_y1)
 
-        def calculate_triangle_centroid(vertex1, vertex2, vertex3):
+
+        def calculate_three_point_centroid(vertex1, vertex2, vertex3):
             x1, y1 = vertex1
             x2, y2 = vertex2
             x3, y3 = vertex3
 
-            centroid_x = (x1 + x2 + x3) / 3.0
-            centroid_y = (y1 + y2 + y3) / 3.0
+            centroid_x2 = (x1 + x2 + x3) / 3.0
+            centroid_y2 = (y1 + y2 + y3) / 3.0
 
-            return (centroid_x, centroid_y)
+            return (centroid_x2, centroid_y2)
 
         def calculate_four_point_centroid(vertex1, vertex2, vertex3, vertex4):
             x1, y1 = vertex1
@@ -282,10 +234,10 @@ class swift():
             x3, y3 = vertex3
             x4, y4 = vertex4
 
-            centroid_x = (x1 + x2 + x3 + x4) / 4.0
-            centroid_y = (y1 + y2 + y3 + y4) / 4.0
+            centroid_x3 = (x1 + x2 + x3 + x4) / 4.0
+            centroid_y3 = (y1 + y2 + y3 + y4) / 4.0
 
-            return (centroid_x, centroid_y)
+            return (centroid_x3, centroid_y3)
 
         # Loop over the contours
         for cont in contours:
@@ -310,33 +262,52 @@ class swift():
                 cx, cy = 0, 0
 
             print("Number of leds: ", num_leds)
+            area_list.append(area)
+            centroid_list.append((cx, cy))
+            print(centroid_list)
 
-            if (num_leds == 1):
-                print("alien_1")
+            if num_leds > 1:
+                # If LED is detected, hover
+                self.cmd.rcRoll = 1500
+                self.cmd.rcPitch = 1500
+                self.cmd.rcYaw = 1500
+                self.cmd.rcThrottle = 1500
+                self.cmd.rcAUX1 = 1500
+                self.cmd.rcAUX2 = 1500
+                self.cmd.rcAUX3 = 1500
+                self.cmd.rcAUX4 = 1500
 
-            elif (num_leds == 2):
-                centroid = calculate_two_point_centroid(vertex1, vertex2)
+                # Publish the hover command
+                self.command_pub.publish(self.cmd)
+            else:
+                # If no LED is detected, perform PID control
+                self.pid()
+
+            if (num_leds == 2):
+                centroid = calculate_two_point_centroid(centroid_list[0], centroid_list[1])
                 print("Centroid coordinates for 2 points:", centroid)
                 print("alien_a")
 
             elif (num_leds == 3):
                 print("alien_b")
-                centroid = calculate_three_point_centroid(vertex1, vertex2, vertex3)
+                centroid = calculate_three_point_centroid(centroid_list[0], centroid_list[1], centroid_list[2])
                 print("Centroid coordinates:", centroid)
 
             elif (num_leds == 4):
                 print("alien_c")
-                centroid = calculate_four_point_centroid(vertex1, vertex2, vertex3, vertex4)
+                centroid = calculate_four_point_centroid(centroid_list[0], centroid_list[1], centroid_list[2], centroid_list[3])
                 print("Centroid coordinates for 4 points:", centroid)
 
             # Append centroid coordinates and area to the respective lists
-            area_list.append(area)
-            centroid_list.append((cx, cy))
+
+
 
         # ------------------------------------------------------------------------------------------------
 
         # Save the output image as a PNG file
-        cv2.imshow( contour_image)
+        cv2.imshow("led_detection_results", drone_ros_image)
+
+
 
     # Whycon callback function
     # The function gets executed each time when /whycon node publishes /whycon/poses 
@@ -439,3 +410,4 @@ if __name__ == '__main__':
     while not rospy.is_shutdown():
         swift_drone.pid()
         r.sleep()
+

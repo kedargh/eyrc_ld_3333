@@ -52,7 +52,7 @@ class swift():
         # [x_setpoint, y_setpoint, z_setpoint]
         #self.setpoint = [11,-11,30] # whycon marker at the position of the dummy given in the scene. Make the whycon marker associated with position_to_hold dummy renderable and make changes accordingly
         self.bridge = CvBridge()
-        z = 30
+        z = 28
         self.setpoints = []
         for i in range(1, 12):
             y = i
@@ -171,15 +171,7 @@ class swift():
         cv2.imshow("Image window", drone_ros_image)
         cv2.waitKey(3)
 
-    def led_detection(self):
-        # ----------------------------------------------------------------------------------------------------------
-
-        # load the image
-
-        drone_ros_image = cv2.imread('led.jpg')
-        # cv2.imshow("Image", drone_ros_image)
-        # cv2.waitKey(2000)
-
+    def led_detection(self,drone_ros_image):
         # ----------------------------------------------------------------------------------------------------------
 
         # convert it to grayscale, and blur it
@@ -304,7 +296,7 @@ class swift():
                 continue
 
             # Draw the bright spot on the image
-            contour_image = cv2.drawContours(img, contours, -1, (0, 0, 255), 2)
+            contour_image = cv2.drawContours(drone_ros_image, contours, -1, (0, 0, 255), 2)
             # cv2.imshow('Contours', contour_image)
             # cv2.waitKey(2000)
 
@@ -344,7 +336,7 @@ class swift():
         # ------------------------------------------------------------------------------------------------
 
         # Save the output image as a PNG file
-        cv2.imwrite("led_detection_results.png", img)
+        cv2.imshow( contour_image)
 
     # Whycon callback function
     # The function gets executed each time when /whycon node publishes /whycon/poses 
@@ -446,6 +438,4 @@ if __name__ == '__main__':
     r = rospy.Rate(30) #specify rate in Hz based upon your desired PID sampling time, i.e. if desired sample time is 33ms specify rate as 30Hz
     while not rospy.is_shutdown():
         swift_drone.pid()
-        swift_drone.led_detection()
         r.sleep()
-

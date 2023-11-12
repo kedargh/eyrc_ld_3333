@@ -52,24 +52,25 @@ class swift():
         # [x_setpoint, y_setpoint, z_setpoint]
         #self.setpoint = [11,-11,30] # whycon marker at the position of the dummy given in the scene. Make the whycon marker associated with position_to_hold dummy renderable and make changes accordingly
         self.bridge = CvBridge()
-        z = 30
         self.setpoints = []
-        for i in range(1, 11):
-            y = i
-            for x in range(i, -i - 1, -1):
-                self.setpoints.append([x, y, z])
-            x = -i
-            for y in range(i, -i - 1, -1):
-                self.setpoints.append([x, y, z])
-            y = -i
-            for x in range(-i, i):
-                self.setpoints.append([x, y, z])
-            x = i
-            for y in range(-i, i):
-                self.setpoints.append([x, y, z])
+        z_values = [10, 20, 28]
 
-        self.setpoints.reverse()
+        for z in z_values:
+            for i in (3, 8, 10):
+                y = i
+                for x in range(i, -i - 1, -1):
+                    self.setpoints.append([x, y, z])
+                x = -i
+                for y in range(i, -i - 1, -1):
+                    self.setpoints.append([x, y, z])
+                y = -i
+                for x in range(-i, i):
+                    self.setpoints.append([x, y, z])
+                x = i
+                for y in range(-i, i):
+                    self.setpoints.append([x, y, z])
 
+        #self.setpoints.reverse()
 
         #Declaring a cmd of message type swift_msgs and initializing values
         self.cmd = swift_msgs()
@@ -266,22 +267,6 @@ class swift():
             centroid_list.append((cx, cy))
             print(centroid_list)
 
-            if num_leds > 1:
-                # If LED is detected, hover
-                self.cmd.rcRoll = 1500
-                self.cmd.rcPitch = 1500
-                self.cmd.rcYaw = 1500
-                self.cmd.rcThrottle = 1500
-                self.cmd.rcAUX1 = 1500
-                self.cmd.rcAUX2 = 1500
-                self.cmd.rcAUX3 = 1500
-                self.cmd.rcAUX4 = 1500
-
-                # Publish the hover command
-                self.command_pub.publish(self.cmd)
-            else:
-                # If no LED is detected, perform PID control
-                self.pid()
 
             if (num_leds == 2):
                 centroid = calculate_two_point_centroid(centroid_list[0], centroid_list[1])
@@ -292,6 +277,16 @@ class swift():
                 print("alien_b")
                 centroid = calculate_three_point_centroid(centroid_list[0], centroid_list[1], centroid_list[2])
                 print("Centroid coordinates:", centroid)
+                if num_leds == 3 and len(centroid_list) == 3:
+                   
+                    while 1:
+                        self.index = 0
+                        self.setpoints = [[11,11,37]]
+                        self.pid()
+                    if((self.setpoint[0] == self.drone_position[0]+self.margin_error) and (self.setpoint[1] == self.drone_position[1]+self.margin_error ) and (self.setpoint[2] == self.drone_position[2]+self.margin_error )) or ((self.setpoint[0] == self.drone_position[0]-self.margin_error) and (self.setpoint[1] == self.drone_position[1]-self.margin_error ) and (self.setpoint[2] == self.drone_position[2]-self.margin_error )):
+                        while 1:
+                            print("disarming")
+                            self.disarm()
 
             elif (num_leds == 4):
                 print("alien_c")

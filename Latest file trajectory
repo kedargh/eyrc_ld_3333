@@ -53,7 +53,7 @@ class swift():
         #self.setpoint = [11,-11,30] # whycon marker at the position of the dummy given in the scene. Make the whycon marker associated with position_to_hold dummy renderable and make changes accordingly
         self.bridge = CvBridge()
         self.setpoints = []
-        z_values = [10, 20, 28]
+        z_values = [15, 20, 28]
 
         for z in z_values:
             for i in (3, 8, 10):
@@ -70,7 +70,7 @@ class swift():
                 for y in range(-i, i):
                     self.setpoints.append([x, y, z])
 
-        #self.setpoints.reverse()
+        self.setpoints.reverse()
 
         #Declaring a cmd of message type swift_msgs and initializing values
         self.cmd = swift_msgs()
@@ -166,6 +166,11 @@ class swift():
     def drone_cam(self,image):
         try:
           drone_ros_image = self.bridge.imgmsg_to_cv2(image, "bgr8")
+          height, width, channels = drone_ros_image.shape
+
+            #Print the dimensions
+          #print("Width:", width)
+          #print("Height:", height)
           self.led_detection(drone_ros_image)
         except CvBridgeError as e:
           print(e)
@@ -174,52 +179,75 @@ class swift():
         
         cv2.waitKey(3)
 
-    def led_detection(self,drone_ros_image):
-        # convert it to grayscale, and blur it
+    def led_detection(self,image_path):
+        # load the image
+        img = image_path
 
-        grayimg = cv2.cvtColor(drone_ros_image, cv2.COLOR_BGR2GRAY)
+        # convert it to grayscale, and blur it
+        grayimg = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         blurimg = cv2.GaussianBlur(grayimg, (3, 3), sigmaX=0, sigmaY=0)
+
+        # threshold the image to reveal light regions in the blurred image
         _, thresholdimg = cv2.threshold(blurimg, 120, 255, cv2.THRESH_BINARY)
-        # perform a series of erosions and dilations to remove any small blobs of noise from the thresholded image
+
+        # perform a series of erosions and dilations to remove small blobs of noise
         kernel = np.ones((3, 3), np.uint8)
         erosionimg = cv2.erode(thresholdimg, kernel, iterations=2)
         dilationimg = cv2.dilate(erosionimg, kernel, iterations=2)
-        # perform a connected component analysis on the thresholded image, then initialize a mask to store only the "large" components
+
+        # perform connected component analysis on the thresholded image
         nos_Labels, label_id, val, centroid = cv2.connectedComponentsWithStats(thresholdimg, 4, cv2.CV_32S)
+
         # loop over the unique components
         output = np.zeros_like(grayimg, dtype="uint8")
-        num_leds = 0
-        # output = np.zeros_like(image_gray)
+
         for i in range(1, nos_Labels):
             area = val[i, cv2.CC_STAT_AREA]
-            # if this is the background label (i.e., the largest component), ignore it
             if area > 600:
                 continue
-            # otherwise, construct the label mask
             lableMask = (label_id == i).astype("uint8") * 255
-            # Calculate the number of pixels in the component
-            number_pixels = np.sum(lableMask) / 255
-            if area > 140 and area < 600:
+            if 140 < area < 600:
                 large_blobs_mask = cv2.bitwise_or(output, lableMask)
-                num_leds += 1
-        # find the contours in the mask, then sort them from left to right
+
+        # find contours in the mask and sort them from left to right
         contours = cv2.findContours(dilationimg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         contours = imutils.grab_contours(contours)
         contours = sorted(contours, key=lambda c: cv2.boundingRect(c)[0])
+
+        # initialize lists to store centroid coordinates and area
         centroid_list = []
         area_list = []
-        # ----------------------------------------------------------------------------------------------
-        def calculate_two_point_centroid(vertex1, vertex2):
-            x1, y1 = vertex1
-            x2, y2 = vertex2
+        # loop over the contours
+        for cont in contours:
+            area = cv2.contourArea(cont)
+            if area > 1000:
+                continue
+            contour_image = cv2.drawContours(img, contours, -1, (0, 0, 255), 2)
+            M = cv2.moments(cont)
 
-            centroid_x1 = (x1 + x2) / 2.0
-            centroid_y1 = (y1 + y2) / 2.0
+            if M['m00'] != 0:
+                cx = float(M['m10'] / M['m00'])
+                cy = float(M['m01'] / M['m00'])
+            else:
+                cx, cy = 0, 0
 
-            return (centroid_x1, centroid_y1)
+            area_list.append(area)
+            centroid_list.append((cx, cy))
 
 
-        def calculate_three_point_centroid(vertex1, vertex2, vertex3):
+
+
+            #detect alian b 
+            if len(contours) == 3 and len(centroid_list) == 3:
+                centroid = self.calculate_three_point_centroid(centroid_list[0], centroid_list[1], centroid_list[2])
+                
+                print(centroid)
+
+
+
+
+
+    def calculate_three_point_centroid(self, vertex1, vertex2, vertex3):
             x1, y1 = vertex1
             x2, y2 = vertex2
             x3, y3 = vertex3
@@ -228,89 +256,10 @@ class swift():
             centroid_y2 = (y1 + y2 + y3) / 3.0
 
             return (centroid_x2, centroid_y2)
-
-        def calculate_four_point_centroid(vertex1, vertex2, vertex3, vertex4):
-            x1, y1 = vertex1
-            x2, y2 = vertex2
-            x3, y3 = vertex3
-            x4, y4 = vertex4
-
-            centroid_x3 = (x1 + x2 + x3 + x4) / 4.0
-            centroid_y3 = (y1 + y2 + y3 + y4) / 4.0
-
-            return (centroid_x3, centroid_y3)
-
-        # Loop over the contours
-        for cont in contours:
-            # Calculate the area of the contour
-            area = cv2.contourArea(cont)
-            # print (area)
-            if area > 1000:
-                continue
-
-            # Draw the bright spot on the image
-            contour_image = cv2.drawContours(drone_ros_image, contours, -1, (0, 0, 255), 2)
-            # cv2.imshow('Contours', contour_image)
-            # cv2.waitKey(2000)
-
-            # Calculate the centroid coordinates
-            M = cv2.moments(cont)
-            if M['m00'] != 0:
-                cx = float(M['m10'] / M['m00'])
-                cy = float(M['m01'] / M['m00'])
-            else:
-                # Handle the case when the area (m00) is zero to avoid division by zero
-                cx, cy = 0, 0
-
-            print("Number of leds: ", num_leds)
-            area_list.append(area)
-            centroid_list.append((cx, cy))
-            print(centroid_list)
-
-
-            if (num_leds == 2):
-                centroid = calculate_two_point_centroid(centroid_list[0], centroid_list[1])
-                print("Centroid coordinates for 2 points:", centroid)
-                print("alien_a")
-
-            elif (num_leds == 3):
-                print("alien_b")
-                centroid = calculate_three_point_centroid(centroid_list[0], centroid_list[1], centroid_list[2])
-                print("Centroid coordinates:", centroid)
-                if num_leds == 3 and len(centroid_list) == 3:
-                   
-                    while 1:
-                        self.index = 0
-                        self.setpoints = [[11,11,37]]
-                        self.pid()
-                    if((self.setpoint[0] == self.drone_position[0]+self.margin_error) and (self.setpoint[1] == self.drone_position[1]+self.margin_error ) and (self.setpoint[2] == self.drone_position[2]+self.margin_error )) or ((self.setpoint[0] == self.drone_position[0]-self.margin_error) and (self.setpoint[1] == self.drone_position[1]-self.margin_error ) and (self.setpoint[2] == self.drone_position[2]-self.margin_error )):
-                        while 1:
-                            print("disarming")
-                            self.disarm()
-
-            elif (num_leds == 4):
-                print("alien_c")
-                centroid = calculate_four_point_centroid(centroid_list[0], centroid_list[1], centroid_list[2], centroid_list[3])
-                print("Centroid coordinates for 4 points:", centroid)
-
-            # Append centroid coordinates and area to the respective lists
-
-
-
-        # ------------------------------------------------------------------------------------------------
-
-        # Save the output image as a PNG file
-        cv2.imshow("led_detection_results", drone_ros_image)
-
-
-
     # Whycon callback function
     # The function gets executed each time when /whycon node publishes /whycon/poses 
     def whycon_callback(self,msg):
         self.drone_position[0] = msg.poses[0].position.x
-
-        #--------------------Set the remaining co-ordinates of the drone from msg----------------------------------------------
-
         self.drone_position[1] = msg.poses[0].position.y
         self.drone_position[2] = msg.poses[0].position.z
         #print(self.drone_position)
@@ -361,7 +310,7 @@ class swift():
         if self.drone_position[0] > (self.setpoint[0] - self.margin_error) and self.drone_position[0] < (self.setpoint[0] + self.margin_error) :
             if self.drone_position[1] > (self.setpoint[1] - self.margin_error) and self.drone_position[1] < (self.setpoint[1] + self.margin_error) :                
                 if self.drone_position[2] > (self.setpoint[2] - self.margin_error) and self.drone_position[2] < (self.setpoint[2] + self.margin_error) :
-                    self.index += 1
+                    self.index += 5
                     if self.index >= len(self.setpoints):
                         self.index = len(self.setpoints) - 1 
 

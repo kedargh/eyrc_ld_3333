@@ -299,6 +299,10 @@ class swift():
                 if self.drone_position[2] > (self.setpoint[2] - self.margin_error) and self.drone_position[2] < (self.setpoint[2] + self.margin_error) :
                     self.index += 1
                     if self.index >= len(self.setpoints):
+                        while 1:
+                            print("disarming the drone")
+                            self.disarm()
+                        
                         self.index = len(self.setpoints) - 1 
 
         self.error[0] = -(self.drone_position[0] - self.setpoint[0])

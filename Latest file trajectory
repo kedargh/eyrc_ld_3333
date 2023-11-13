@@ -103,20 +103,6 @@ class swift():
         self.min_throttle = 1000
         self.max_throttle = 2000
 
-        self.update_setpoint = False
-
-
-        # Hint : Add variables for storing previous errors in each axis, like self.prev_error = [0,0,0] where corresponds to [pitch, roll, throttle]        #        Add variables for limiting the values like self.max_values = [2000,2000,2000] corresponding to [roll, pitch, throttle]
-        #                                                   self.min_values = [1000,1000,1000] corresponding to [pitch, roll, throttle]
-        #                                                                   You can change the upper limit and lower limit accordingly. 
-        #----------------------------------------------------------------------------------------------------------
-
-        # # This is the sample time in which you need to run pid. Choose any time which you seem fit. Remember the stimulation step time is 50 ms
-        # self.sample_time = 0.060 # in seconds
-
-
-
-
 
         # Publishing /drone_command, /alt_error, /pitch_error, /roll_error
         self.command_pub = rospy.Publisher('/drone_command', swift_msgs, queue_size=1)
@@ -237,6 +223,9 @@ class swift():
             if len(contours) == 3 and len(centroid_list) == 3:
                 centroid = self.calculate_three_point_centroid(centroid_list[0], centroid_list[1], centroid_list[2])
                 print(centroid)
+
+
+                
                 self.setpoints.append([11,11,37])
                 self.index = len(self.setpoints) - 1
 
@@ -293,7 +282,6 @@ class swift():
     def pid(self):
 
         self.setpoint = self.setpoints[self.index]
-        print(self.setpoint)
         if self.drone_position[0] > (self.setpoint[0] - self.margin_error) and self.drone_position[0] < (self.setpoint[0] + self.margin_error) :
             if self.drone_position[1] > (self.setpoint[1] - self.margin_error) and self.drone_position[1] < (self.setpoint[1] + self.margin_error) :                
                 if self.drone_position[2] > (self.setpoint[2] - self.margin_error) and self.drone_position[2] < (self.setpoint[2] + self.margin_error) :

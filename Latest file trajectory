@@ -237,10 +237,10 @@ class swift():
             if len(contours) == 3 and len(centroid_list) == 3:
                 centroid = self.calculate_three_point_centroid(centroid_list[0], centroid_list[1], centroid_list[2])
                 print(centroid)
-                while 1:
-                    self.update_setpoint = True
-                    self.pid()
-                    print(self.drone_position,self.setpoint)
+                self.setpoints.append([11,11,37])
+                self.index = len(self.setpoints) - 1
+
+                    
 
                 
 
@@ -263,7 +263,6 @@ class swift():
         self.drone_position[0] = msg.poses[0].position.x
         self.drone_position[1] = msg.poses[0].position.y
         self.drone_position[2] = msg.poses[0].position.z
-        #print(self.drone_position)
         #---------------------------------------------------------------------------------------------------------------
 
     def check(self, cal_value, max_value, min_value):   #max value and min value setting checking function
@@ -294,11 +293,7 @@ class swift():
     def pid(self):
 
         self.setpoint = self.setpoints[self.index]
-
-        if self.update_setpoint:
-            self.setpoint = [11, 11, 30]
-            self.update_setpoint = False
-
+        print(self.setpoint)
         if self.drone_position[0] > (self.setpoint[0] - self.margin_error) and self.drone_position[0] < (self.setpoint[0] + self.margin_error) :
             if self.drone_position[1] > (self.setpoint[1] - self.margin_error) and self.drone_position[1] < (self.setpoint[1] + self.margin_error) :                
                 if self.drone_position[2] > (self.setpoint[2] - self.margin_error) and self.drone_position[2] < (self.setpoint[2] + self.margin_error) :

@@ -32,6 +32,7 @@ from sensor_msgs.msg import Image
 import cv2
 from cv_bridge import CvBridge, CvBridgeError
 
+from luminosity_drone.msg import Biolocation
 from imutils import contours
 from skimage import measure
 import numpy as np
@@ -83,6 +84,13 @@ class swift():
         self.cmd.rcAUX3 = 1500
         self.cmd.rcAUX4 = 1500
 
+        self.bio = Biolocation()
+        self.bio.organism_type
+        self.bio.whycon_x
+        self.bio.whycon_y 
+        self.bio.whycon_z
+
+
 
         #initial setting of Kp, Kd and ki for [roll, pitch, throttle]. eg: self.Kp[2] corresponds to Kp value in throttle axis
         #after tuning and computing corresponding PID parameters, change the parameters
@@ -131,6 +139,12 @@ class swift():
         self.command_pub.publish(self.cmd)
         rospy.sleep(1)
 
+    def set_bio(self,name,x,y,z):
+        self.bio.organism_type  = name
+        self.bio.whycon_x       = x
+        self.bio.whycon_y       = y 
+        self.bio.whycon_z       = z
+        print(name,x,y,z)
 
     # Arming condition of the drone : Best practise is to disarm and then arm the drone.
     def arm(self):
@@ -148,11 +162,6 @@ class swift():
     def drone_cam(self,image):
         try:
           drone_ros_image = self.bridge.imgmsg_to_cv2(image, "bgr8")
-          height, width, channels = drone_ros_image.shape
-
-            #Print the dimensions
-          #print("Width:", width)
-          #print("Height:", height)
           self.led_detection(drone_ros_image)
         except CvBridgeError as e:
           print(e)
@@ -221,20 +230,29 @@ class swift():
 
             #detect alian b 
             if len(contours) == 3 and len(centroid_list) == 3:
-                centroid = self.calculate_three_point_centroid(centroid_list[0], centroid_list[1], centroid_list[2])
+                centroidx , centroidy = self.calculate_three_point_centroid(centroid_list[0], centroid_list[1], centroid_list[2])
                 print(centroid)
-
-
-                
-                self.setpoints.append([11,11,37])
-                self.index = len(self.setpoints) - 1
-
-                    
-
-                
-
-
-
+                if centroidx < 250:
+                    print("x<250")
+                    self.setpoints.append([self.drone_position[0]+1,self.drone_position[1],self.drone_position[2]])
+                    self.index = len(self.setpoints) - 1
+                if centroidx >250:
+                    print("x>250")
+                    self.setpoints.append([self.drone_position[0]-1,self.drone_position[1],self.drone_position[2]])
+                    self.index = len(self.setpoints) - 1
+                if centroidy < 250:
+                    print("y<250")
+                    self.setpoints.append([self.drone_position[0],self.drone_position[1]+1,self.drone_position[2]])
+                    self.index = len(self.setpoints) - 1
+                if centroidy >250:
+                    print("y>250")
+                    self.setpoints.append([self.drone_position[0]-1,self.drone_position[1]-1,self.drone_position[2]])
+                    self.index = len(self.setpoints) - 1
+                if (centroidx == 250 and centroidy == 250):
+                    print("perfect condition")
+                    self.set_bio("alian_b" , self.drone_position[0] , self.drone_position[1] , self.drone_position [2])
+                    self.setpoints.append([11,11,37])
+                    self.index = len(self.setpoints) - 1
 
 
     def calculate_three_point_centroid(self, vertex1, vertex2, vertex3):

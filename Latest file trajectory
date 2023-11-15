@@ -101,12 +101,12 @@ class swift():
         self.prev_error = [0,0,0] 
         self.differential_error = [0,0,0]
         self.sum_error = [0,0,0]
-        self.margin_error = 0.2
+        self.margin_error = 0.15
         self.index = 0
     
         self.min_throttle = 1000
         self.max_throttle = 2000
-
+        self.x = 0
 
         # Publishing /drone_command, /alt_error, /pitch_error, /roll_error
         self.command_pub        = rospy.Publisher('/drone_command', swift_msgs, queue_size=1)
@@ -233,7 +233,7 @@ class swift():
                 centroidx , centroidy = self.calculate_three_point_centroid(centroid_list[0], centroid_list[1], centroid_list[2])
                 #print(centroid)
                 if centroidx < 250:
-
+                    
                     self.setpoints.append([self.drone_position[0]+1,self.drone_position[1],self.drone_position[2]])
                     self.index = len(self.setpoints) - 1
                 if centroidx >250:
@@ -249,13 +249,14 @@ class swift():
                     self.setpoints.append([self.drone_position[0]-1,self.drone_position[1]-1,self.drone_position[2]])
                     self.index = len(self.setpoints) - 1
                 if (centroidx >= 245 or centroidx <= 255) and (centroidy >= 245 or centroidy <=255):
-                    self.bio.organism_type = "alian_b"
+                    self.bio.organism_type = "alien_b"
                     self.bio.whycon_x = self.drone_position[0]
                     self.bio.whycon_y = self.drone_position[1]
                     self.bio.whycon_z = self.drone_position[2]
                     print(self.bio.organism_type,self.bio.whycon_x,self.bio.whycon_y,self.bio.whycon_z)
                     self.setpoints.append([11,11,37])
                     self.index = len(self.setpoints) - 1
+                    
                     
 
 
@@ -311,6 +312,9 @@ class swift():
                     if self.index >= len(self.setpoints):
                         while 1:
                             self.disarm()
+                            while self.x<1:
+                                self.biolocation_pub.publish(self.bio)
+                                self.x+=1
                         self.index = len(self.setpoints) - 2
 
         self.error[0] = -(self.drone_position[0] - self.setpoint[0])

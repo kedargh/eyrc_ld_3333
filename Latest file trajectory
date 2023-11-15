@@ -248,17 +248,15 @@ class swift():
 
                     self.setpoints.append([self.drone_position[0]-1,self.drone_position[1]-1,self.drone_position[2]])
                     self.index = len(self.setpoints) - 1
-                if (centroidx >= 240 or centroidx <= 260) and (centroidy >= 240 or centroidy <=260):
+                if (centroidx >= 245 or centroidx <= 255) and (centroidy >= 245 or centroidy <=255):
                     self.bio.organism_type = "alian_b"
                     self.bio.whycon_x = self.drone_position[0]
                     self.bio.whycon_y = self.drone_position[1]
                     self.bio.whycon_z = self.drone_position[2]
                     print(self.bio.organism_type,self.bio.whycon_x,self.bio.whycon_y,self.bio.whycon_z)
-                    # Publish the message
-                    self.biolocation_pub.publish(self.bio)
-
                     self.setpoints.append([11,11,37])
                     self.index = len(self.setpoints) - 1
+                    
 
 
     def calculate_three_point_centroid(self, vertex1, vertex2, vertex3):

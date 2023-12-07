@@ -51,29 +51,8 @@ class swift():
         
 
         # [x_setpoint, y_setpoint, z_setpoint]
-        #self.setpoint = [11,-11,30] # whycon marker at the position of the dummy given in the scene. Make the whycon marker associated with position_to_hold dummy renderable and make changes accordingly
+        self.setpoint = [2,2,30]
         self.bridge = CvBridge()
-        self.setpoints = []
-        z_values = [15, 20, 28]
-
-        for z in z_values:
-            for i in (3, 8, 10):
-                y = i
-                for x in range(i, -i - 1, -1):
-                    self.setpoints.append([x, y, z])
-                x = -i
-                for y in range(i, -i - 1, -1):
-                    self.setpoints.append([x, y, z])
-                y = -i
-                for x in range(-i, i):
-                    self.setpoints.append([x, y, z])
-                x = i
-                for y in range(-i, i):
-                    self.setpoints.append([x, y, z])
-
-        self.setpoints.reverse()
-        self.setpoint = [0,0,20]
-
         #Declaring a cmd of message type swift_msgs and initializing values
         self.cmd = swift_msgs()
         self.cmd.rcRoll = 1500
@@ -92,9 +71,9 @@ class swift():
         #initial setting of Kp, Kd and ki for [roll, pitch, throttle]. eg: self.Kp[2] corresponds to Kp value in throttle axis
         #after tuning and computing corresponding PID parameters, change the parameters
 
-        self.Kp = [1,1,1]#previous values - 42 , 42 , 25.2
-        self.Ki = [0,0,0]#previous values - 0.004 , 0.004 , 0.086
-        self.Kd = [0,0,0]#previous values - 600 , 600 , 500 
+        self.Kp = [42.48    , 53.7    , 25.2 ]#previous values - 42 , 42 , 25.2
+        self.Ki = [0.0064 , 0.0064 , 0.086]#previous values - 0.004 , 0.004 , 0.086
+        self.Kd = [700.8   , 826.4   , 500  ]#previous values - 600 , 600 , 500 
    
         #-----------------------Add other required variables for pid here ----------------------------------------------
 
@@ -294,9 +273,8 @@ class swift():
 
     #----------------------------------------------------------------------------------------------------------------------
 
-
-
     def pid(self):
+
         self.error[0] = -(self.drone_position[0] - self.setpoint[0])
         self.error[1] = (self.drone_position[1] - self.setpoint[1])
         self.error[2] = (self.drone_position[2] - self.setpoint[2])
@@ -309,11 +287,11 @@ class swift():
         self.sum_error[1] = self.sum_error[1] + self.error[1]
         self.sum_error[2] = self.sum_error[2] + self.error[2]
 
-        self.cmd.rcRoll = int(1590 + self.error[0]*self.Kp[0] + self.differential_error[0]*self.Kd[0]+ self.sum_error[0]*self.Ki[0])
+        self.cmd.rcRoll = int(1500 + self.error[0]*self.Kp[0] + self.differential_error[0]*self.Kd[0]+ self.sum_error[0]*self.Ki[0])
         self.check(self.cmd.rcRoll , self.max_throttle , self.min_throttle)
-        self.cmd.rcPitch = int(1590 + self.error[1]*self.Kp[1] + self.differential_error[1]*self.Kd[1] + self.sum_error[1]*self.Ki[1])
+        self.cmd.rcPitch = int(1500 + self.error[1]*self.Kp[1] + self.differential_error[1]*self.Kd[1] + self.sum_error[1]*self.Ki[1])
         self.check(self.cmd.rcPitch , self.max_throttle , self.min_throttle)
-        self.cmd.rcThrottle = int(1590 + self.error[2]*self.Kp[2] + self.differential_error[2]*self.Kd[2] + self.sum_error[2]*self.Ki[2])
+        self.cmd.rcThrottle = int(1560 + self.error[2]*self.Kp[2] + self.differential_error[2]*self.Kd[2] + self.sum_error[2]*self.Ki[2])
         self.check(self.cmd.rcThrottle , self.max_throttle , self.min_throttle)
 
 

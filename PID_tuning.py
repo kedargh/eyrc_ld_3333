@@ -1,0 +1,340 @@
+#!/usr/bin/env python3
+
+'''
+
+This python file runs a ROS-node of name drone_control which holds the position of Swift-Drone on the given dummy.
+This node publishes and subsribes the following topics:
+
+        PUBLICATIONS            SUBSCRIPTIONS
+        /drone_command          /whycon/poses
+        /alt_error              /pid_tuning_altitude
+        /pitch_error            /pid_tuning_pitch
+        /roll_error             /pid_tuning_roll
+                    
+                                
+
+Rather than using different variables, use list. eg : self.setpoint = [1,2,3], where index corresponds to x,y,z ...rather than defining self.x_setpoint = 1, self.y_setpoint = 2
+CODE MODULARITY AND TECHNIQUES MENTIONED LIKE THIS WILL HELP YOU GAINING MORE MARKS WHILE CODE EVALUATION.  
+'''
+
+# Importing the required libraries
+
+from swift_msgs.msg import *
+from geometry_msgs.msg import PoseArray
+from std_msgs.msg import Int16
+from std_msgs.msg import Int64
+from std_msgs.msg import Float64
+from pid_tune.msg import PidTune
+import rospy
+import time
+
+from sensor_msgs.msg import Image
+import cv2
+from cv_bridge import CvBridge, CvBridgeError
+
+from luminosity_drone.msg import Biolocation
+from imutils import contours
+from skimage import measure
+import numpy as np
+import imutils
+import cv2
+
+class swift():
+    """docstring for swift"""
+    def __init__(self):
+        
+        rospy.init_node('drone_control')    # initializing ros node with name drone_control
+
+        # This corresponds to your current position of drone. This value must be updated each time in your whycon callback
+        # [x,y,z]
+        self.drone_position = [0.0,0.0,0.0]
+        
+
+        # [x_setpoint, y_setpoint, z_setpoint]
+        #self.setpoint = [11,-11,30] # whycon marker at the position of the dummy given in the scene. Make the whycon marker associated with position_to_hold dummy renderable and make changes accordingly
+        self.bridge = CvBridge()
+        self.setpoints = []
+        z_values = [15, 20, 28]
+
+        for z in z_values:
+            for i in (3, 8, 10):
+                y = i
+                for x in range(i, -i - 1, -1):
+                    self.setpoints.append([x, y, z])
+                x = -i
+                for y in range(i, -i - 1, -1):
+                    self.setpoints.append([x, y, z])
+                y = -i
+                for x in range(-i, i):
+                    self.setpoints.append([x, y, z])
+                x = i
+                for y in range(-i, i):
+                    self.setpoints.append([x, y, z])
+
+        self.setpoints.reverse()
+        self.setpoint = [0,0,20]
+
+        #Declaring a cmd of message type swift_msgs and initializing values
+        self.cmd = swift_msgs()
+        self.cmd.rcRoll = 1500
+        self.cmd.rcPitch = 1500
+        self.cmd.rcYaw = 1500
+        self.cmd.rcThrottle = 1500
+        self.cmd.rcAUX1 = 1500
+        self.cmd.rcAUX2 = 1500
+        self.cmd.rcAUX3 = 1500
+        self.cmd.rcAUX4 = 1500
+
+        self.bio = Biolocation()
+ 
+
+
+        #initial setting of Kp, Kd and ki for [roll, pitch, throttle]. eg: self.Kp[2] corresponds to Kp value in throttle axis
+        #after tuning and computing corresponding PID parameters, change the parameters
+
+        self.Kp = [1,1,1]#previous values - 42 , 42 , 25.2
+        self.Ki = [0,0,0]#previous values - 0.004 , 0.004 , 0.086
+        self.Kd = [0,0,0]#previous values - 600 , 600 , 500 
+   
+        #-----------------------Add other required variables for pid here ----------------------------------------------
+
+        self.error = [0,0,0]
+        self.prev_error = [0,0,0] 
+        self.differential_error = [0,0,0]
+        self.sum_error = [0,0,0]
+        self.margin_error = 0.15
+        self.index = 0
+    
+        self.min_throttle = 1000
+        self.max_throttle = 2000
+        self.x = 0
+
+        # Publishing /drone_command, /alt_error, /pitch_error, /roll_error
+        self.command_pub        = rospy.Publisher('/drone_command', swift_msgs, queue_size=1)
+        self.throttle_error_pub = rospy.Publisher('/alt_error', Float64, queue_size=1)
+        self.pitch_error_pub    = rospy.Publisher('/pitch_error', Float64, queue_size=1)
+        self.roll_error_pub     = rospy.Publisher('/roll_error', Float64, queue_size=1)
+        self.biolocation_pub    = rospy.Publisher('/astrobiolocation', Biolocation, queue_size=1)
+
+
+    #-----------------------------------------------------------------------------------------------------------
+
+
+        # Subscribing to /whycon/poses, /pid_tuning_altitude, /pid_tuning_pitch, pid_tuning_roll
+        rospy.Subscriber('whycon/poses', PoseArray, self.whycon_callback)
+        rospy.Subscriber('/pid_tuning_altitude',PidTune,self.altitude_set_pid)
+        rospy.Subscriber('/pid_tuning_pitch',PidTune,self.pitch_set_pid)
+        rospy.Subscriber('/pid_tuning_roll',PidTune,self.roll_set_pid)
+        rospy.Subscriber('/swift/camera_rgb/image_raw', Image, self.drone_cam)
+
+        #------------------------------------------------------------------------------------------------------------
+
+        self.arm() # ARMING THE DRONE
+
+
+    # Disarming condition of the drone
+    def disarm(self):
+        self.cmd.rcRoll     = 0
+        self.cmd.rcPitch    = 0
+        self.cmd.rcYaw      = 0
+        self.cmd.rcThrottle = 0
+        self.cmd.rcAUX1     = 0
+        self.cmd.rcAUX2     = 0
+        self.cmd.rcAUX3     = 0
+        self.cmd.rcAUX4     = 0
+        self.command_pub.publish(self.cmd)
+        rospy.sleep(1)
+
+
+
+    # Arming condition of the drone : Best practise is to disarm and then arm the drone.
+    def arm(self):
+
+        self.disarm()
+
+        self.cmd.rcRoll = 1500
+        self.cmd.rcYaw = 1500
+        self.cmd.rcPitch = 1500
+        self.cmd.rcThrottle = 1000
+        self.cmd.rcAUX4 = 1500
+        self.command_pub.publish(self.cmd)  # Publishing /drone_command
+        rospy.sleep(1)
+
+    def drone_cam(self,image):
+        try:
+          drone_ros_image = self.bridge.imgmsg_to_cv2(image, "bgr8")
+          self.led_detection(drone_ros_image)
+        except CvBridgeError as e:
+          pass 
+        cv2.waitKey(3)
+
+    def led_detection(self,image_path):
+        # load the image
+        img = image_path
+
+        # convert it to grayscale, and blur it
+        grayimg = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        blurimg = cv2.GaussianBlur(grayimg, (3, 3), sigmaX=0, sigmaY=0)
+
+        # threshold the image to reveal light regions in the blurred image
+        _, thresholdimg = cv2.threshold(blurimg, 120, 255, cv2.THRESH_BINARY)
+
+        # perform a series of erosions and dilations to remove small blobs of noise
+        kernel = np.ones((3, 3), np.uint8)
+        erosionimg = cv2.erode(thresholdimg, kernel, iterations=2)
+        dilationimg = cv2.dilate(erosionimg, kernel, iterations=2)
+
+        # perform connected component analysis on the thresholded image
+        nos_Labels, label_id, val, centroid = cv2.connectedComponentsWithStats(thresholdimg, 4, cv2.CV_32S)
+
+        # loop over the unique components
+        output = np.zeros_like(grayimg, dtype="uint8")
+
+        for i in range(1, nos_Labels):
+            area = val[i, cv2.CC_STAT_AREA]
+            if area > 600:
+                continue
+            lableMask = (label_id == i).astype("uint8") * 255
+            if 140 < area < 600:
+                large_blobs_mask = cv2.bitwise_or(output, lableMask)
+
+        # find contours in the mask and sort them from left to right
+        contours = cv2.findContours(dilationimg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours = imutils.grab_contours(contours)
+        contours = sorted(contours, key=lambda c: cv2.boundingRect(c)[0])
+
+        # initialize lists to store centroid coordinates and area
+        centroid_list = []
+        area_list = []
+        # loop over the contours
+        for cont in contours:
+            area = cv2.contourArea(cont)
+            if area > 1000:
+                continue
+            contour_image = cv2.drawContours(img, contours, -1, (0, 0, 255), 2)
+            M = cv2.moments(cont)
+
+            if M['m00'] != 0:
+                cx = float(M['m10'] / M['m00'])
+                cy = float(M['m01'] / M['m00'])
+            else:
+                cx, cy = 0, 0
+
+            area_list.append(area)
+            centroid_list.append((cx, cy))
+
+            #detect alian b 
+            if len(contours) == 3 and len(centroid_list) == 3:
+                centroidx , centroidy = self.calculate_three_point_centroid(centroid_list[0], centroid_list[1], centroid_list[2])
+                #print(centroid)
+                if centroidx < 250:
+                    self.setpoints.append([self.drone_position[0]+1,self.drone_position[1],self.drone_position[2]])
+                    self.index = len(self.setpoints) - 1
+                if centroidx >250:
+
+                    self.setpoints.append([self.drone_position[0]-1,self.drone_position[1],self.drone_position[2]])
+                    self.index = len(self.setpoints) - 1
+                if centroidy < 250:
+
+                    self.setpoints.append([self.drone_position[0],self.drone_position[1]+1,self.drone_position[2]])
+                    self.index = len(self.setpoints) - 1
+                if centroidy >250:
+
+                    self.setpoints.append([self.drone_position[0]-1,self.drone_position[1]-1,self.drone_position[2]])
+                    self.index = len(self.setpoints) - 1
+                if (centroidx >= 245 or centroidx <= 255) and (centroidy >= 245 or centroidy <=255):
+                    self.bio.organism_type = "alien_b"
+                    self.bio.whycon_x = self.drone_position[0]
+                    self.bio.whycon_y = self.drone_position[1]
+                    self.bio.whycon_z = self.drone_position[2]
+                    print(self.bio.organism_type,self.bio.whycon_x,self.bio.whycon_y,self.bio.whycon_z)
+                    self.setpoints.append([11,11,37])
+                    self.index = len(self.setpoints) - 1
+                    
+    def calculate_three_point_centroid(self, vertex1, vertex2, vertex3):
+            x1, y1 = vertex1
+            x2, y2 = vertex2
+            x3, y3 = vertex3
+
+            centroid_x2 = (x1 + x2 + x3) / 3.0
+            centroid_y2 = (y1 + y2 + y3) / 3.0
+
+            return (centroid_x2, centroid_y2)
+    
+    # Whycon callback function
+    # The function gets executed each time when /whycon node publishes /whycon/poses 
+    def whycon_callback(self,msg):
+        self.drone_position[0] = msg.poses[0].position.x
+        self.drone_position[1] = msg.poses[0].position.y
+        self.drone_position[2] = msg.poses[0].position.z
+        #---------------------------------------------------------------------------------------------------------------
+
+    def check(self, cal_value, max_value, min_value):   #max value and min value setting checking function
+        if cal_value > max_value:
+            return max_value
+        elif cal_value < min_value:
+            return min_value
+        else:
+            return cal_value
+    
+    def altitude_set_pid(self,alt):
+        self.Kp[2] = alt.Kp * 0.06 
+        self.Ki[2] = alt.Ki * 0.0008
+        self.Kd[2] = alt.Kd * 0.3
+        
+    def roll_set_pid(self,roll): 
+        self.Kp[0] = roll.Kp * 0.06 
+        self.Ki[0] = roll.Ki * 0.0008
+        self.Kd[0] = roll.Kd * 0.3
+
+    def pitch_set_pid(self,pitch): 
+        self.Kp[1] = pitch.Kp * 0.06
+        self.Ki[1] = pitch.Ki * 0.0008
+        self.Kd[1] = pitch.Kd * 0.3
+
+    #----------------------------------------------------------------------------------------------------------------------
+
+
+
+    def pid(self):
+        self.error[0] = -(self.drone_position[0] - self.setpoint[0])
+        self.error[1] = (self.drone_position[1] - self.setpoint[1])
+        self.error[2] = (self.drone_position[2] - self.setpoint[2])
+
+        self.differential_error[0] = self.error[0] - self.prev_error[0]
+        self.differential_error[1] = self.error[1] - self.prev_error[1]
+        self.differential_error[2] = self.error[2] - self.prev_error[2]
+
+        self.sum_error[0] = self.sum_error[0] + self.error[0]
+        self.sum_error[1] = self.sum_error[1] + self.error[1]
+        self.sum_error[2] = self.sum_error[2] + self.error[2]
+
+        self.cmd.rcRoll = int(1590 + self.error[0]*self.Kp[0] + self.differential_error[0]*self.Kd[0]+ self.sum_error[0]*self.Ki[0])
+        self.check(self.cmd.rcRoll , self.max_throttle , self.min_throttle)
+        self.cmd.rcPitch = int(1590 + self.error[1]*self.Kp[1] + self.differential_error[1]*self.Kd[1] + self.sum_error[1]*self.Ki[1])
+        self.check(self.cmd.rcPitch , self.max_throttle , self.min_throttle)
+        self.cmd.rcThrottle = int(1590 + self.error[2]*self.Kp[2] + self.differential_error[2]*self.Kd[2] + self.sum_error[2]*self.Ki[2])
+        self.check(self.cmd.rcThrottle , self.max_throttle , self.min_throttle)
+
+
+    #------------------------------------------------------------------------------------------------------------------------
+        self.command_pub.publish(self.cmd)
+        
+        self.prev_error[0]=self.error[0]
+        self.prev_error[1]=self.error[1]
+        self.prev_error[2]=self.error[2]
+
+        
+        self.roll_error_pub.publish(self.error[0])
+        self.pitch_error_pub.publish(self.error[1])
+        self.throttle_error_pub.publish(self.error[2])
+
+
+if __name__ == '__main__':
+
+    swift_drone = swift()
+    r = rospy.Rate(30) #specify rate in Hz based upon your desired PID sampling time, i.e. if desired sample time is 33ms specify rate as 30Hz
+    while not rospy.is_shutdown():
+        swift_drone.pid()
+        r.sleep()
+

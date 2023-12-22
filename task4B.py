@@ -15,7 +15,7 @@ parser.add_argument('--image')
 args = parser.parse_args()
 print(args)
 img = cv2.imread(args.image)
-
+txt_filename = (args.image).replace(".png",".txt")
 #----------------------------------------------------------------------------------------------------------
 
 #implementation logic updated for stage 2
@@ -45,6 +45,27 @@ contours = sorted(contours, key=lambda c: cv2.boundingRect(c)[0])
 centroid_list = []
 area_list = []
 
+def centroid_calculator(centroid_list):
+    alien =  (len(centroid_list))
+    sumofx = sum(xcoor for xcoor , _ in centroid_list)
+    sumofy = sum(ycoor for _ , ycoor in centroid_list)
+    centroidx = sumofx/alien
+    centroidy = sumofy/alien
+    if alien == 2 :
+        file.write(f"Organism Type: alien_a\n" + f"Centroid: {(centroidx,centroidy)}\n")
+    elif alien == 3 :
+        file.write(f"Organism Type: alien_a\n" + f"Centroid: {(centroidx,centroidy)}\n")
+    elif alien == 4 :
+        file.write(f"Organism Type: alien_a\n" + f"Centroid: {(centroidx,centroidy)}\n")
+    elif alien == 5 :
+        file.write(f"Organism Type: alien_a\n" + f"Centroid: {(centroidx,centroidy)}\n")
+    elif alien >= 6 :
+        print("Organism Type: alien_ededed")
+        print(centroid_list)
+        print("alien length : "+ str(alien))
+        for i in range(0,(alien-1),1):
+            print(str(centroid_list[i+1][0] - centroid_list[i][0]) + " , "  + str(centroid_list[i+1][1] - centroid_list[i][1]) + "\n")
+    return centroidx,centroidy
 #----------------------------------------------------------------------------------------------
 
 # Loop over the contours
@@ -69,16 +90,29 @@ cv2.drawContours(img, contours, -1, (0, 0, 255), 2)
 #------------------------------------------------------------------------------------------------
 
 # Save the output image as a PNG file
-cv2.imwrite("led_detection_results.png", img)
+#cv2.imwrite(img_filename, img)
 
 # Open a text file for writing
-with open("led_detection_results.txt", "w") as file:
+with open(txt_filename, "w") as file:
     # Write the number of LEDs detected to the file
-    file.write(f"No. of LEDs detected: {len(centroid_list)}\n")
-
+    #file.write(f"No. of LEDs detected: {len(centroid_list)}\n")
+    x,y = centroid_calculator(centroid_list)
     # Loop over the contours
-    for i in range (0,len(centroid_list)):
+    #for i in range (0,len(centroid_list)):
         # Write centroid coordinates and area for each LED to the file
-        file.write(f"Centroid #{i + 1}: {centroid_list[i]}\nArea #{i + 1}: {area_list[i]}\n")
+        #file.write(f"Centroid #{i + 1}: {centroid_list[i]}\nArea #{i + 1}: {area_list[i]}\n")
 # Close the text file
 file.close()
+cv2.circle(img, (round(float(x)),round(float(y))), 5, (0,255,0), -1)
+
+# Display the image with the drawn point
+cv2.imshow('Image with Point', img)
+cv2.waitKey(0)
+cv2.destroyAllWindows()
+
+
+
+
+
+
+

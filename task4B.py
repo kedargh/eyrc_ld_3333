@@ -1,7 +1,5 @@
 # import the necessary packages
 
-from imutils import contours
-from skimage import measure
 import numpy as np
 import argparse
 import imutils
@@ -13,7 +11,6 @@ import cv2
 parser = argparse.ArgumentParser()
 parser.add_argument('--image')
 args = parser.parse_args()
-print(args)
 img = cv2.imread(args.image)
 txt_filename = (args.image).replace(".png",".txt")
 #----------------------------------------------------------------------------------------------------------
@@ -44,7 +41,7 @@ contours = sorted(contours, key=lambda c: cv2.boundingRect(c)[0])
 
 centroid_list = []
 area_list = []
-centroids = []
+centroids = []   #[alien type , no of leds and centroid coordinates]
 def centroid_calculator(centroid_list):
     alien =  (len(centroid_list))
     sumofx = sum(xcoor for xcoor , _ in centroid_list)
@@ -54,16 +51,16 @@ def centroid_calculator(centroid_list):
     
     if alien == 2 :
         file.write(f"Organism Type: alien_a\n" + f"Centroid: {(centroidx,centroidy)}\n\n")
-        centroids.append([centroidx,centroidy])
+        centroids.append(['alien_a' , 2 ,centroidx,centroidy])
     elif alien == 3 :
         file.write(f"Organism Type: alien_b\n" + f"Centroid: {(centroidx,centroidy)}\n\n")
-        centroids.append([centroidx,centroidy])
+        centroids.append(['alien_b' , 3 ,centroidx,centroidy])
     elif alien == 4 :
         file.write(f"Organism Type: alien_c\n" + f"Centroid: {(centroidx,centroidy)}\n\n")
-        centroids.append([centroidx,centroidy])
+        centroids.append(['alien_c' , 4 ,centroidx,centroidy])
     elif alien == 5 :
         file.write(f"Organism Type: alien_d\n" + f"Centroid: {(centroidx,centroidy)}\n\n")
-        centroids.append([centroidx,centroidy])
+        centroids.append(['alien_d' , 5 ,centroidx,centroidy])
     elif alien >= 6 :
         centroid_1 = []  # x < 256, y < 256
         centroid_2 = []  # x < 256, y > 256
@@ -119,3 +116,12 @@ cv2.drawContours(img, contours, -1, (0, 0, 255), 2)
 with open(txt_filename, "w") as file:
     centroid_list = centroid_calculator(centroid_list)
 file.close()
+for alien , noofled ,x , y in centroid_list:
+    img = cv2.circle(img, (round(float(x)),round(float(y))), 5, (0,255,0), -1)
+    cv2.putText(img, f'Cluster of {noofled} leds', (round(float(x)+40),round(float(y)-20)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1, cv2.LINE_AA)
+    cv2.putText(img, f'Type: {alien} ', (round(float(x)+40),round(float(y))), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0, 255), 1, cv2.LINE_AA)
+    cv2.putText(img, f'({round(float(x), 2):.2f}, {round(float(y), 2):.2f})', (round(float(x)+40),round(float(y)+20)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+# Display the image with the drawn point
+cv2.imshow('Image with Point', img)
+cv2.waitKey(0)
+cv2.destroyAllWindows()

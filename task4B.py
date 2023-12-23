@@ -44,28 +44,54 @@ contours = sorted(contours, key=lambda c: cv2.boundingRect(c)[0])
 
 centroid_list = []
 area_list = []
-
+centroids = []
 def centroid_calculator(centroid_list):
     alien =  (len(centroid_list))
     sumofx = sum(xcoor for xcoor , _ in centroid_list)
     sumofy = sum(ycoor for _ , ycoor in centroid_list)
     centroidx = sumofx/alien
     centroidy = sumofy/alien
+    
     if alien == 2 :
-        file.write(f"Organism Type: alien_a\n" + f"Centroid: {(centroidx,centroidy)}\n")
+        file.write(f"Organism Type: alien_a\n" + f"Centroid: {(centroidx,centroidy)}\n\n")
+        centroids.append([centroidx,centroidy])
     elif alien == 3 :
-        file.write(f"Organism Type: alien_a\n" + f"Centroid: {(centroidx,centroidy)}\n")
+        file.write(f"Organism Type: alien_b\n" + f"Centroid: {(centroidx,centroidy)}\n\n")
+        centroids.append([centroidx,centroidy])
     elif alien == 4 :
-        file.write(f"Organism Type: alien_a\n" + f"Centroid: {(centroidx,centroidy)}\n")
+        file.write(f"Organism Type: alien_c\n" + f"Centroid: {(centroidx,centroidy)}\n\n")
+        centroids.append([centroidx,centroidy])
     elif alien == 5 :
-        file.write(f"Organism Type: alien_a\n" + f"Centroid: {(centroidx,centroidy)}\n")
+        file.write(f"Organism Type: alien_d\n" + f"Centroid: {(centroidx,centroidy)}\n\n")
+        centroids.append([centroidx,centroidy])
     elif alien >= 6 :
-        print("Organism Type: alien_ededed")
-        print(centroid_list)
-        print("alien length : "+ str(alien))
-        for i in range(0,(alien-1),1):
-            print(str(centroid_list[i+1][0] - centroid_list[i][0]) + " , "  + str(centroid_list[i+1][1] - centroid_list[i][1]) + "\n")
-    return centroidx,centroidy
+        centroid_1 = []  # x < 256, y < 256
+        centroid_2 = []  # x < 256, y > 256
+        centroid_3 = []  # x > 256, y < 256
+        centroid_4 = []  # x > 256, y > 256
+
+        for x, y in centroid_list:
+            if x < 256 and y < 256:
+                centroid_1.append((x, y))
+            elif x < 256 and y > 256:
+                centroid_2.append((x, y))
+            elif x > 256 and y < 256:
+                centroid_3.append((x, y))
+            else:
+                centroid_4.append((x, y))
+
+        if len(centroid_1) != 0:
+            centroid_calculator(centroid_1)
+
+        if len(centroid_2) != 0:
+            centroid_calculator(centroid_2)
+
+        if len(centroid_3) != 0:
+            centroid_calculator(centroid_3)
+
+        if len(centroid_4) != 0:
+            centroid_calculator(centroid_4)
+    return centroids
 #----------------------------------------------------------------------------------------------
 
 # Loop over the contours
@@ -89,30 +115,7 @@ for cont in contours:
 cv2.drawContours(img, contours, -1, (0, 0, 255), 2)
 #------------------------------------------------------------------------------------------------
 
-# Save the output image as a PNG file
-#cv2.imwrite(img_filename, img)
-
 # Open a text file for writing
 with open(txt_filename, "w") as file:
-    # Write the number of LEDs detected to the file
-    #file.write(f"No. of LEDs detected: {len(centroid_list)}\n")
-    x,y = centroid_calculator(centroid_list)
-    # Loop over the contours
-    #for i in range (0,len(centroid_list)):
-        # Write centroid coordinates and area for each LED to the file
-        #file.write(f"Centroid #{i + 1}: {centroid_list[i]}\nArea #{i + 1}: {area_list[i]}\n")
-# Close the text file
+    centroid_list = centroid_calculator(centroid_list)
 file.close()
-cv2.circle(img, (round(float(x)),round(float(y))), 5, (0,255,0), -1)
-
-# Display the image with the drawn point
-cv2.imshow('Image with Point', img)
-cv2.waitKey(0)
-cv2.destroyAllWindows()
-
-
-
-
-
-
-

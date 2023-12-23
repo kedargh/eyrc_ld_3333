@@ -13,6 +13,8 @@ parser.add_argument('--image')
 args = parser.parse_args()
 img = cv2.imread(args.image)
 txt_filename = (args.image).replace(".png",".txt")
+img_filename = (args.image).replace(".png","_output.png")
+
 #----------------------------------------------------------------------------------------------------------
 
 #implementation logic updated for stage 2
@@ -120,8 +122,6 @@ for alien , noofled ,x , y in centroid_list:
     img = cv2.circle(img, (round(float(x)),round(float(y))), 5, (0,255,0), -1)
     cv2.putText(img, f'Cluster of {noofled} leds', (round(float(x)+40),round(float(y)-20)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1, cv2.LINE_AA)
     cv2.putText(img, f'Type: {alien} ', (round(float(x)+40),round(float(y))), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0, 255), 1, cv2.LINE_AA)
-    cv2.putText(img, f'({round(float(x), 2):.2f}, {round(float(y), 2):.2f})', (round(float(x)+40),round(float(y)+20)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+    cv2.putText(img, f'({round(float(x), 2):.2f}, {round(float(y), 2):.2f})', (round(float(x)+40),round(float(y)+20)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1, cv2.LINE_AA)
 # Display the image with the drawn point
-cv2.imshow('Image with Point', img)
-cv2.waitKey(0)
-cv2.destroyAllWindows()
+cv2.imwrite(img_filename, img)

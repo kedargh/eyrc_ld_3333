@@ -152,7 +152,7 @@ class DroneController():
                         if self.x < 1 :
                             self.count_and_disarm()
                             self.x += 1
-                        if self.count_and_disarm > 20:
+                        if self.count_and_disarm >= 20:
                             self.index +=1
                     
                     if self.set_points == self.setpoints[-1]: #Final point check [0, 0, 25]
@@ -297,6 +297,7 @@ class DroneController():
 
 
     def disarm(self):
+        throttle = self.rc_message.rc_throttle  
         while throttle >=10 :
             throttle = throttle - 50
             self.publish_data_to_rpi( 1500, 1500, round(throttle) )

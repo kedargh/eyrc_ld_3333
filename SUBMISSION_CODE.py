@@ -299,9 +299,9 @@ class DroneController():
     def disarm(self):
         throttle = self.rc_message.rc_throttle  
         while throttle >=10 :
-            throttle = throttle - 50
+            throttle = throttle - 100
             self.publish_data_to_rpi( 1500, 1500, round(throttle) )
-            self.pid()
+            #self.pid()
             print(throttle)
 
     

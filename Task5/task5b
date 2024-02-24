@@ -1,20 +1,27 @@
 #!/usr/bin/env python3
 
-from swift_msgs.msg import PIDError, RCMessage
-from cv_bridge import CvBridge, CvBridgeError
-from rclpy.subscription import Subscription
-from geometry_msgs.msg import PoseArray
-from swift_msgs.srv import CommandBool
+"""
+Controller for the drone
+"""
+
+# standard imports
 from sensor_msgs.msg import Image
-from pid_msg.msg import PidTune
-from rclpy.clock import Clock
-from rclpy.node import Node
+import copy
+import time
+import threading
+# third-party imports
 import scipy.signal
 import numpy as np
-import statistics
-import imutils
 import rclpy
-import time
+from rclpy.node import Node
+from rclpy.clock import Clock
+from geometry_msgs.msg import PoseArray
+from pid_msg.msg import PidTune
+from swift_msgs.msg import PIDError, RCMessage
+from swift_msgs.srv import CommandBool
+from cv_bridge import CvBridge
+import imutils
+import numpy as np
 import cv2
 
 
@@ -28,36 +35,44 @@ BASE_PITCH = 1500
 MAX_PITCH = 1550
 MIN_THROTTLE = 1000
 MAX_THROTTLE = 1700
+
 DRONE_WHYCON_POSE = [[0], [0], [0]]
+
+# Similarly, create upper and lower limits, base value, and max sum error values for roll and pitch
 
 class DroneController():
     def __init__(self,node):
         self.node= node
+        
         self.rc_message = RCMessage()   
         self.drone_whycon_pose_array = PoseArray()
         self.last_whycon_pose_received_at = 0
         self.commandbool = CommandBool.Request()
         service_endpoint = "/swift/cmd/arming"
-        self.arming_service_client = self.node.create_client(CommandBool,service_endpoint)   
+        self.x = 0
+
+        self.arming_service_client = self.node.create_client(CommandBool,service_endpoint)
+        self.set_points = [0, 0, 22]         # Setpoints for x, y, z respectively      
+
         self.index = 0
-        self.bridge = CvBridge()
         self.error              = [0,0,0]
         self.prev_error         = [0,0,0] 
         self.differential_error = [0,0,0]
         self.sum_error          = [0,0,0]
-        self.calibration_completed = False
-
-        self.alien_flag = 0
-
-        self.setpoints = [[1.7, 6.23, 18],[-2.08, 6.20, 18] , [-6.02, 6.15, 18] , [-5.82, 1.90, 18],[-5.67, -1.86 , 18],[-5.88 ,-5.88 , 18],[-2.09 ,-5.68, 18],[1.84 , -5.84 , 18],[5.49, -5.94, 18],[5.60, -1.95, 18],[5.40 ,2.11, 18],[5.50, 5.87, 18],[9.5,9.5,22],[9.5,9.5,25.5]]
+        self.setpoints = [[0, 0, 21], [2, -0.5, 21], [-2, -0.87, 21], [-1.2, 3, 21], [2.3, 3, 21], [6, 2.5, 21], [5.8, -1, 21], [5.5, -5.6, 21], [2, -4.8, 21], [-2, 4.3, 21], [-5.23, -4.76, 21], [-5, -0.5, 21], [-5.38, 3.15, 21], [-5, -7, 21], [-1.1, 6.8, 21], [2.38, 6.3, 21], [6.4, 7.5, 21], [9.7, 6.3, 21], [9.2, 2.6, 21], [9.3, -1.8, 21], [9.4, -5.5, 21], [9, -8.7, 21], [6, -8.6, 21], [2.21, -8.6, 21], [-1.8, -8.4, 21], [-5.4, -7.9, 21], [-9.2, -8.23, 21], [-9.6, -4.6, 21], [-10, 0, 21], [-9, 2.7, 21], [-9, 6, 21], [-9, 10, 21], [-5, 10, 21], [-2, 10, 21], [2, 10, 21], [6, 10, 21], [9, 10, 21]]
         self.margin_error  = 0.8
+        self.Kp = [1.95   , 2.49   ,2.5]#previous values - 9.06 , 7.64, 4.8 
+        self.Ki = [63*0.0001 , 63*0.0001  , 0.0401]#previous values - 0.0042 ,0.0021, 0.0019
+        self.Kd = [69.3   , 72.2 ,168.1 ]#previous values - 423.6 , 165.9 , 102.6 
+
+        self.bridge = CvBridge()
         self.centroid_list = []
         self.area_list = []
         self.centroids = []  
 
-        self.Kp = [1.95   , 2.49   ,2.5]#previous values - 9.06 , 7.64, 4.8 
-        self.Ki = [63*0.0001 , 63*0.0001  , 0.0401]#previous values - 0.0042 ,0.0021, 0.0019
-        self.Kd = [69.3   , 72.2 ,168.1 ]#previous values - 423.6 , 165.9 , 102.6 
+
+
+
 
         # Create subscriber for WhyCon 
         
@@ -65,7 +80,8 @@ class DroneController():
         self.pid_alt = node.create_subscription(PidTune,"/pid_tuning_altitude",self.pid_tune_throttle_callback,1)
         self.pid_alt = node.create_subscription(PidTune,"/pid_tuning_roll"    ,self.pid_tune_roll_callback,1)
         self.pid_alt = node.create_subscription(PidTune,"/pid_tuning_pitch"   ,self.pid_tune_pitch_callback,1)
-        self.drone_img = node.create_subscription(Image,"/video_frames",self.drone_alien,1)
+        self.drone_img = node.create_subscription(Image,"/video_frames",self.saveimg,1)
+
         
         # Create publisher for sending commands to drone 
 
@@ -73,6 +89,7 @@ class DroneController():
         self.pid_error_pub = node.create_publisher(PIDError, "/luminosity_drone/pid_error",1)        
         self.integral_pub = node.create_publisher(PIDError, "/luminosity_drone/pid_error",1)
         self.rc_command_unfiltered_pub = node.create_publisher(RCMessage, "/luminosity/rc_command_unfiltered",1)
+        #self.setpoints.append(self.drone_whycon_pose_array.poses[0].position.x,self.drone_whycon_pose_array.poses[0].position.y,self.drone_whycon_pose_array.poses[0].position.z)
 
 
     def whycon_poses_callback(self, msg):
@@ -102,14 +119,114 @@ class DroneController():
         else:
             return cal_value
 
+
+    def saveimg(self,msg):
+        try:
+            self.img = self.bridge.imgmsg_to_cv2(msg, "8UC3")
+            print("Image converted successfully")
+        except:
+            print("exception")
+
+
+
+    def detect_alien(self,img):
+        #filtering image
+        erosionimg = cv2.erode(img, np.ones((7,7)), iterations=1)
+        grayimg = cv2.cvtColor(erosionimg, cv2.COLOR_BGR2GRAY)
+        _, thresholdimg = cv2.threshold(grayimg, 180, 255, cv2.THRESH_BINARY)
+        dilationimg = cv2.dilate(thresholdimg, np.ones((7,7)), iterations=1)
+        #find out counters
+        contours = cv2.findContours(dilationimg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours = imutils.grab_contours(contours)
+        contours = sorted(contours, key=lambda c: cv2.boundingRect(c)[0])
+        return contours
+    
+    def centroid_calculator(self,centroid_list):
+        alien =  (len(centroid_list))
+        sumofx = sum(xcoor for xcoor , _ in centroid_list)
+        sumofy = sum(ycoor for _ , ycoor in centroid_list)
+        centroidx = sumofx/alien
+        centroidy = sumofy/alien
+
+        if alien == 2 :
+            self.centroids.append(['alien_a' , 2 ,centroidx,centroidy])
+        elif alien == 3 :
+            self.centroids.append(['alien_b' , 3 ,centroidx,centroidy])
+        elif alien == 4 :
+            self.centroids.append(['alien_c' , 4 ,centroidx,centroidy])
+        elif alien == 5 :
+            self.centroids.append(['alien_d' , 5 ,centroidx,centroidy])
+        elif alien >= 6 :
+            centroid_1 = []  # x < 256, y < 256
+            centroid_2 = []  # x < 256, y > 256
+            centroid_3 = []  # x > 256, y < 256
+            centroid_4 = []  # x > 256, y > 256
+
+            for x, y in centroid_list:
+                if x < 256 and y < 256:
+                    centroid_1.append((x, y))
+                elif x < 256 and y > 256:
+                    centroid_2.append((x, y))
+                elif x > 256 and y < 256:
+                    centroid_3.append((x, y))
+                else:
+                    centroid_4.append((x, y))
+
+            if len(centroid_1) != 0:
+                self.centroid_calculator(centroid_1)
+
+            if len(centroid_2) != 0:
+                self.centroid_calculator(centroid_2)
+
+            if len(centroid_3) != 0:
+                self.centroid_calculator(centroid_3)
+
+            if len(centroid_4) != 0:
+                self.centroid_calculator(centroid_4)
+        return self.centroids
+    
+    def write(self,contours,img):
+        print("counter len ",len(contours))
+        if len(contours)<6 and len(contours)>0:
+            for cont in contours:
+            # Calculate the area of the contour
+                area = cv2.contourArea(cont)
+                # Calculate the centroid coordinates
+                M = cv2.moments(cont)
+                if M['m00'] != 0:
+                    cx = float(M['m10'] / M['m00'])
+                    cy = float(M['m01'] / M['m00'])
+                else:
+                    # Handle the case when the area (m00) is zero to avoid division by zero
+                    cx, cy = 0, 0
+
+                # Append centroid coordinates and area to the respective lists
+                self.area_list.append(area)
+                self.centroid_list.append((cx , cy))
+
+            # Draw the bright spot on the image
+            cv2.drawContours(img, contours, -1, (0, 0, 255), 2)
+            #------------------------------------------------------------------------------------------------
+
+            centroid_list = self.centroid_calculator(self.centroid_list)
+            print("centroid list ",centroid_list)
+            cv2.imshow("output",img)
+            cv2.waitKey(0)
+
+
     def pid(self):
+
+        # 0 : calculating Error, Derivative, Integral for Roll error : x axis
         try:
             self.set_points = self.setpoints[self.index]
             print("setpoints ",self.set_points)
-            print(self.index+1)
             if float(self.drone_whycon_pose_array.poses[0].position.x)> (self.set_points[0] - self.margin_error) and float(self.drone_whycon_pose_array.poses[0].position.x) < (self.set_points[0] + self.margin_error) :
                 if float(self.drone_whycon_pose_array.poses[0].position.y) > (self.set_points[1] - self.margin_error) and float(self.drone_whycon_pose_array.poses[0].position.y)< (self.set_points[1] + self.margin_error) :                
                     if float(self.drone_whycon_pose_array.poses[0].position.z) > (self.set_points[2] - self.margin_error) and float(self.drone_whycon_pose_array.poses[0].position.z) < (self.set_points[2] + self.margin_error) :
+                        counter = self.detect_alien(self.img)
+                        self.write(counter,self.img)
+                        
+                        
                         self.index += 1
                     if self.index >= len(self.setpoints):
                         self.shutdown_hook()
@@ -118,7 +235,7 @@ class DroneController():
             self.error[0] = (-(float(self.drone_whycon_pose_array.poses[0].position.x) - self.set_points[0]))
             self.error[1] = (float(self.drone_whycon_pose_array.poses[0].position.y) - self.set_points[1])
             self.error[2] = (float(self.drone_whycon_pose_array.poses[0].position.z) - self.set_points[2])
-            print(self.error)
+            print("self.error" , self.error)
             self.differential_error[0] = self.error[0] - self.prev_error[0]
             self.differential_error[1] = self.error[1] - self.prev_error[1]
             self.differential_error[2] = self.error[2] - self.prev_error[2]
@@ -133,7 +250,6 @@ class DroneController():
             self.rc_message.rc_pitch = self.check(self.rc_message.rc_pitch , MAX_PITCH , MIN_PITCH)
             self.rc_message.rc_throttle = int(1450 + self.error[2]*self.Kp[2] + self.differential_error[2]*self.Kd[2] + self.sum_error[2]*self.Ki[2])
             self.rc_message.rc_throttle = self.check(self.rc_message.rc_throttle , MAX_THROTTLE , MIN_THROTTLE)
-            #1450
 
         # Similarly calculate error for y and z axes 
         
@@ -179,6 +295,7 @@ class DroneController():
                 zero_error=0.0,
             )
         )
+
 
     def publish_data_to_rpi(self, roll, pitch, throttle):
 
@@ -230,14 +347,20 @@ class DroneController():
 
         self.rc_pub.publish(self.rc_message)
 
+
+    # This function will be called as soon as this rosnode is terminated. So we disarm the drone as soon as we press CTRL + C. 
+    # If anything goes wrong with the drone, immediately press CTRL + C so that the drone disamrs and motors stop 
+
     def shutdown_hook(self):
         self.node.get_logger().info("Calling shutdown hook")
         self.disarm()
  
+
     def arm(self):
         self.node.get_logger().info("Calling arm service")
         self.commandbool.value = True
         self.future = self.arming_service_client.call_async(self.commandbool)
+
 
     def disarm(self):
         print("disarming")
@@ -247,189 +370,15 @@ class DroneController():
             self.publish_data_to_rpi( 1500, 1500, round(throttle) )
             time.sleep(0.8)
             #self.pid()
-            print(throttle)
+            print("throttle ",throttle)
             if throttle <500:
                 self.node.get_logger().info("Calling disarm service")
                 self.commandbool.value = False
                 self.future = self.arming_service_client.call_async(self.commandbool)
     
-    def detect_alien(self,img): #returns contour borders or number of aliens
-        #filtering image
-        print("Executing detect alien")
-        erosionimg = cv2.erode(img, np.ones((7,7)), iterations=1)
-        grayimg = cv2.cvtColor(erosionimg, cv2.COLOR_BGR2GRAY)
-        _, thresholdimg = cv2.threshold(grayimg, 180, 255, cv2.THRESH_BINARY)
-        dilationimg = cv2.dilate(thresholdimg, np.ones((7,7)), iterations=1)
-        #find out counters
-        contours = cv2.findContours(dilationimg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        contours = imutils.grab_contours(contours)
-        contours = sorted(contours, key=lambda c: cv2.boundingRect(c)[0])
-        return contours
-
-    def write(self,contours,img):#makes centroid_list, area_list
-        print("\n\n")
-        print("length of contours is: ",len(contours))
-        if len(contours)< 7 and len(contours)> 2:
-            self.area_list = []
-            self.centroid_list = []
-            for cont in contours:
-            # Calculate the area of the contour
-                area = cv2.contourArea(cont)
-                # Calculate the centroid coordinates
-                M = cv2.moments(cont)
-                if M['m00'] != 0:
-                    cx = float(M['m10'] / M['m00'])
-                    cy = float(M['m01'] / M['m00'])
-                else:
-                    # Handle the case when the area (m00) is zero to avoid division by zero
-                    cx, cy = 0, 0
-
-                # Append centroid coordinates and area to the respective lists
-                self.area_list.append(area)
-                print('Area appended')
-                self.centroid_list.append((cx , cy))
-                print('cx cy appended')
-
-            self.centroids = self.centroid_calculator(self.centroid_list)
-            print("Printing centroids")
-            print(self.centroids)
-
-            #if self.centroids:
-            #    self.caliberation(self.centroids)
-            # Draw the bright spot on the image
-            cv2.drawContours(img, contours, -1, (0, 0, 255), 2)
-            cv2.imshow("output",img)
-            #centroid_list = self.centroid_calculator(self.centroid_list)
-            #print(centroid_list)
-            #cv2.imshow("output",img)
-            #if self.calibration_completed:
-            #    print("calibration done")
-
-    def centroid_calculator(self,centroid_list):#this is making the centroids list 
-        alien =  (len(centroid_list))
-        sumofx = sum(xcoor for xcoor , _ in centroid_list)
-        sumofy = sum(ycoor for _ , ycoor in centroid_list)
-        centroidx = sumofx/alien
-        centroidy = sumofy/alien
-
-        if alien == 2 :
-            self.centroids.append(['alien_a' , 2 ,centroidx,centroidy])
-        elif alien == 3 :
-            self.centroids.append(['alien_b' , 3 ,centroidx,centroidy])
-        elif alien == 4 :
-            self.centroids.append(['alien_c' , 4 ,centroidx,centroidy])
-        elif alien == 5 :
-            self.centroids.append(['alien_d' , 5 ,centroidx,centroidy])
-        elif alien >= 6 and alien < 15 :
-            centroid_1 = []  # x < 256, y < 256
-            centroid_2 = []  # x < 256, y > 256
-            centroid_3 = []  # x > 256, y < 256
-            centroid_4 = []  # x > 256, y > 256
-
-            for x, y in centroid_list:
-                if x < 256 and y < 256:
-                    centroid_1.append((x, y))
-                elif x < 256 and y > 256:
-                    centroid_2.append((x, y))
-                elif x > 256 and y < 256:
-                    centroid_3.append((x, y))
-                else:
-                    centroid_4.append((x, y))
-            print("error")
-            if len(centroid_1) != 0:
-                self.centroid_calculator(centroid_1)
-
-            if len(centroid_2) != 0:
-                self.centroid_calculator(centroid_2)
-
-            if len(centroid_3) != 0:
-                self.centroid_calculator(centroid_3)
-
-            if len(centroid_4) != 0:
-                self.centroid_calculator(centroid_4)
-        return self.centroids
-    
-    def max_of_aliens(self,centroids):#we are taking the maximum points observed by the camera and that as the main alien
-        alien_detected = max(list(centroids[1]))
-        if(alien_detected == 2):
-            print("Its alien A")
-        elif(alien_detected == 3):
-            print("Its alien B")
-        elif(alien_detected == 4):
-            print("Its alien C")
-        elif(alien_detected == 5):
-            print("Its alien D")
-
-    #def caliberation(self,centroids):
-    #    x_coordinates = [centroid[2] for centroid in centroids]
-    #    y_coordinates = [centroid[3] for centroid in centroids]
-#
-    #    if self.is_above_alien(x_coordinates, y_coordinates):
-    #        print("Publishing x and y coordinates")
-    #        self.calibration_completed = True
-    #    else:
-    #        print("Still aligning")
-    #        centroid_x = sum(x_coordinates) / len(x_coordinates)
-    #        centroid_y = sum(y_coordinates) / len(y_coordinates)
-    #        
-    #        correction_roll = self.calculate_correction_roll(centroid_x)
-    #        correction_pitch = self.calculate_correction_pitch(centroid_y)
-    #        self.publish_correction(correction_roll, correction_pitch)
-    #        self.calibration_completed = False
-
-        #if abs(error_x) < 0.7 and abs(error_y) < 0.7:
-        #    self.publish_data_to_rpi(self.rc_message.rc_roll, self.rc_message.rc_pitch, self.rc_message.rc_throttle)
-        #else:
-        #    pass
 
 
-    #def calculate_correction_roll(self, centroid_x):
-        #proportional_gain = 0.001
-        #correction_roll = proportional_gain * (centroid_x - 250)
-        #return correction_roll
-    
-    #def calculate_correction_pitch(self, centroid_y):
-        #proportional_gain = 0.001
-        #correction_pitch = proportional_gain * (centroid_y - 250)
-        #return correction_pitch
 
-    def drone_alien(self,msg):
-        print("Executing drone alien")
-        try:
-            # Convert ROS image message to OpenCV image
-            drone_ros_image = self.bridge.imgmsg_to_cv2(msg, "8UC3")
-
-            # Debugging print statement to check if conversion is successful
-            print("Image converted successfully")
-
-            # Call your detect_alien function to process the image
-            contours = self.detect_alien(drone_ros_image)
-            print("Detected alien")
-            if contours!=0:
-            #    self.centroids[2]!= 250 and  self.centroids[3] != 250:
-            #    print("trying to caliberate")
-            #    self.caliberation(self.centroids)
-                print("Executing write function")
-                centroids_gathered = self.write(contours, drone_ros_image)
-                #print("Printing centroids")
-                self.max_of_aliens(self.centroids)
-            # Display the images
-            cv2.imshow("Image window hmmmmmm", drone_ros_image)
-            cv2.waitKey(1)
-        except CvBridgeError as e:
-            # Handle conversion errors
-            print("Error converting image:", e)
-        
-
-    #def if_contours_present_raise_height(self,img,):#HOLD ON TO THIS THOUGHT 
-    #    if self.alien_flag:#HOLD ON TO THIS THOUGHT 
-    #        self.publish_data_to_rpi(1500, 1500,)#HOLD ON TO THIS THOUGHT 
-
-
- 
-    #def bring_height_to_level(self):
-    #    for i in height
-    
 def main(args=None):
     rclpy.init(args=args)
 
@@ -438,7 +387,7 @@ def main(args=None):
     node.get_logger().info("Entering PID controller loop")
 
     controller = DroneController(node)
-    #controller.arm()
+    controller.arm()
     node.get_logger().info("Armed")
 
     try:
@@ -449,14 +398,15 @@ def main(args=None):
             rclpy.spin_once(node) # Sleep for 1/30 secs        
 
     except Exception as err:
-        print("ERROR  :  ", err)
+        print(err)
 
     finally:
-        #controller.stopFan()
-        print("calling shutdown hook")
+        # controller.stopFan()
         controller.shutdown_hook()
         node.destroy_node()
         rclpy.shutdown()
+
+
 
 if __name__ == '__main__':
     main()

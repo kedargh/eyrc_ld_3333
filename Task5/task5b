@@ -210,8 +210,12 @@ class DroneController():
 
             centroid_list = self.centroid_calculator(self.centroid_list)
             print("centroid list ",centroid_list)
-            cv2.imshow("output",img)
-            cv2.waitKey(0)
+            alien_name = self.centroids[0][0]
+            centroid_x = self.set_points[0]
+            centroid_y = self.set_points[1]
+            filename = f"{alien_name}_{centroid_x:.3f}_{centroid_y:.3f}.png"
+            cv2.imwrite(filename, img)
+
 
 
     def pid(self):

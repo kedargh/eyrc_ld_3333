@@ -187,13 +187,14 @@ class DroneController():
 
             # Draw the bright spot on the image
             cv2.drawContours(img, contours, -1, (0, 0, 255), 2)
-
+            #------------------------------------------------------------------------------------------------
             self.alien_count += 1
             if(self.alien_count == self.alien_total):
                 self.index = 23
             centroid_list = self.centroid_calculator(self.centroid_list)
             print("centroid list ",centroid_list)
             alien_name = self.centroids[self.alien_index][0]
+            self.beep_alien(self.centroids[self.alien_index][1])
             centroid_x = self.set_points[0]
             centroid_y = self.set_points[1]
             self.alien_index +=1
@@ -208,7 +209,7 @@ class DroneController():
         self.rc_message.rc_yaw = 1500
         self.rc_message.aux1 = 1000
         self.rc_message.aux2 = 1000
-        self.rc_message.aux3 = 1500 
+        self.rc_message.aux3 = 1000 
         self.rc_message.aux4 = 1500
         self.rc_pub.publish(self.rc_message)
         time.sleep(delay)
@@ -219,6 +220,27 @@ class DroneController():
         self.rc_message.aux3 = 1000
         self.rc_message.aux4 = 1000
         self.rc_pub.publish(self.rc_message)
+
+    def beep_alien(self,times):
+        for _ in range (times):
+            #self.rc_message.rc_throttle = 1500
+            #self.rc_message.rc_roll = 1500                                                                                                                                               
+            #self.rc_message.rc_pitch = 1500
+            #self.rc_message.rc_yaw = 1500
+            self.rc_message.aux1 = 1000
+            self.rc_message.aux2 = 1000
+
+            self.rc_message.aux3 = 1000 
+            self.rc_message.aux4 = 1500
+            self.rc_pub.publish(self.rc_message)
+            time.sleep(0.2)
+            self.rc_message.aux3 = 2000
+            self.rc_message.aux4 = 2000
+            self.rc_pub.publish(self.rc_message)             
+            time.sleep(0.2)
+            self.rc_message.aux3 = 1000
+            self.rc_message.aux4 = 1000
+            self.rc_pub.publish(self.rc_message)
 
     def bioloc(self):
         self.biolocation_msg.organism_type = self.centroids[0][0]

@@ -1,0 +1,638 @@
+#!/usr/bin/env python3
+
+# Team Id          : LD_3333
+# Author List      : Aditya Khode, Kedar Kenjalkar, Ishan Deshpande
+# Filename         : Task_6.py
+# Theme            : LuminosityDrone - eYRC Specific
+# Functions        :  __init__ , whycon_poses_callback , pid_tune_throttle_callback , pid_tune_roll_callback , pid_tune_pitch_callback , check , saveimg , detect_alien , centroid_calculator , write , start_stop_notify , beep_alien , bioloc , pid , publish_data_to_rpi , shutdown_hook , arm , disarm , main
+# Global Variables : MIN_ROLL , BASE_ROLL , MAX_ROLL , MIN_PITCH , BASE_PITCH , MAX_PITCH , MIN_THROTTLE , MAX_THROTTLE , SUM_ERROR_ROLL_LIMIT , DRONE_WHYCON_POSE 
+
+
+import cv2                                       #Image processing library
+import time                                      #Time library for delay
+import rclpy                                     #Library for ROS functionality
+import imutils                                   #Image processing library
+import numpy as np                               #Data processing library
+import scipy.signal                              #Library for filtering data 
+from rclpy.node import Node                      #Library for ROS node 
+from rclpy.clock import Clock                    #Library for ROS node Clock
+from cv_bridge import CvBridge                   #Library for converting ROS image to OpenCV image
+from pid_msg.msg import PidTune                  #PID Tuning package
+from sensor_msgs.msg import Image                #Drone camera image package 
+from loc_msg.msg import Biolocation              #Alien Biolocation package 
+from swift_msgs.srv import CommandBool           #Swift service package 
+from geometry_msgs.msg import PoseArray          #Whycon Pose_array package
+from swift_msgs.msg import PIDError, RCMessage   #PID error and RC message package 
+
+#declare minimum and maximum and base roll, pitch, throttle 
+MIN_ROLL = 1350
+BASE_ROLL = 1500
+MAX_ROLL = 1550
+MIN_PITCH = 1350
+BASE_PITCH = 1500
+MAX_PITCH = 1550
+MIN_THROTTLE = 1000
+MAX_THROTTLE = 1700
+SUM_ERROR_ROLL_LIMIT = 10000
+
+#declares current drone whycon poses 
+DRONE_WHYCON_POSE = [[0], [0], [0]]
+
+#created a class to control drone automatically 
+class DroneController():
+
+    # Function Name : __init__
+    # input         : rosnode 
+    # Output        : void
+    # Logic         : Initilised all the required class variables class objects ros_subscriber ros_publisher and initilised start notification
+    # example       : call Automatically called when object created
+    def __init__(self,node):
+        #create a ros node
+        self.node= node
+
+        #create an object for converting ros2 image to open cv image
+        self.bridge = CvBridge()
+
+        #creating an object for RCMessage for sending speed of roll pitch throttle and aux commands
+        self.rc_message = RCMessage()
+
+        #creating a object for publishing alien whycon coordinate and type
+        self.biolocation_msg = Biolocation()
+
+        #object for arming and disarming
+        self.commandbool = CommandBool.Request()
+
+        #object for whycon poses
+        self.drone_whycon_pose_array = PoseArray()
+
+        service_endpoint = "/swift/cmd/arming"
+        self.last_whycon_pose_received_at = 0
+        self.arming_service_client = self.node.create_client(CommandBool,service_endpoint)    
+        
+        #setpoints arry to traverse through arena
+        self.setpoints = [[0,0, 21], [3.93, -0.173, 21], [3.744, -4.033, 21], [0.043, -3.873, 21], [-3.81, -3.75, 21], [-3.66, 0.027, 21], [-3.648, 3.835, 21], [0.287, 3.716, 21], [4.087, 3.538, 21], [8.064, 3.465, 21], [7.7, -0.42, 21], [7.68, -4.097, 21], [7.53, -7.93 ,21], [3.74, -7.69, 21], [-0.039, -7.829, 21], [-3.96, -7.51, 21], [-7.77, -7.45, 21], [-7.69, -3.78, 21], [-7.59 ,0.139, 21], [-7.485, 4.044, 21], [-7.264, 7.765, 21], [-3.47, 7.805, 21], [0.349, 7.399, 21], [4.181, 7.394, 22], [8.087, 7.394, 23.5],[8.5, 7.5, 26.5]]
+        
+        #index for traversing the setpoints of arena
+        self.index = 0
+
+        #declaring the error margin
+        self.margin_error  = 0.4
+
+        #declaring the pid errors
+        self.error              = [0,0,0]
+        self.prev_error         = [0,0,0] 
+        self.differential_error = [0,0,0]
+        self.sum_error          = [0,0,0]
+
+        #declaring the Kp , Ki , Kd gains in [roll,pitch,throttle] axes 
+        self.Kp = [1.5       , 1.5        , 2.5   ]
+        self.Ki = [63*0.0001 , 63*0.0001  , 0.0401]
+        self.Kd = [160       , 160        , 168.1 ]
+
+        #declaring the required variables for image processing
+        #saves [[Cx1,Cy1],[Cx2,Cy2],........] in format where Cx and Cy are centroids of all leds
+        self.centroid_list = []
+
+        #delete
+        self.area_list = []
+
+        #saves the detected alien information [[Type,no of Leds,Cx1,Cy1],[Type,no of Leds,Cx2,Cy2],...........]
+        self.centroids = []
+
+        #saves no of alien detected 
+        self.alien_count = 0
+
+        #saves the max alien in arena to be detected
+        self.alien_total = 2
+
+        #saves the latest index of alien so can publish the latest alien type in centroids list
+        self.alien_index = 0
+
+        #created a rosnode subscription for whycon poses , pid tuning ,ros2 video frames
+        self.whycon_sub = node.create_subscription(PoseArray,"/whycon/poses",self.whycon_poses_callback,1)
+        self.pid_alt = node.create_subscription(PidTune,"/pid_tuning_altitude",self.pid_tune_throttle_callback,1)
+        self.pid_alt = node.create_subscription(PidTune,"/pid_tuning_roll"    ,self.pid_tune_roll_callback,1)
+        self.pid_alt = node.create_subscription(PidTune,"/pid_tuning_pitch"   ,self.pid_tune_pitch_callback,1)
+        self.drone_img = node.create_subscription(Image,"/video_frames",self.saveimg,1)
+
+        #created a rosnode publisher for RCMessages , pid error ,Biolocation
+        self.rc_pub = node.create_publisher(RCMessage, "/swift/rc_command",1)
+        self.pid_error_pub = node.create_publisher(PIDError, "/luminosity_drone/pid_error",1)        
+        self.integral_pub = node.create_publisher(PIDError, "/luminosity_drone/pid_error",1)
+        self.rc_command_unfiltered_pub = node.create_publisher(RCMessage, "/luminosity/rc_command_unfiltered",1)
+        self.biolocation_pub = node.create_publisher(Biolocation, "/astrobiolocation", 1)
+
+        #intimates the start of the run
+        self.start_stop_notify(1)
+
+        #end of init function
+
+
+    # Function Name : whycon_poses_callback
+    # input         : PoseArray improted in script
+    # Output        : void
+    # Logic         : saves Current Drone X,Y,Z positions whenever the Swift Message publishes the whyconPoses
+    # example       : call Automatically called when whyconPoses are published  
+    def whycon_poses_callback(self, msg):
+        self.last_whycon_pose_received_at = self.node.get_clock().now().seconds_nanoseconds()[0]
+        #saves the poseArray in drone_whycon_pose_array when message is published
+        self.drone_whycon_pose_array = msg
+
+
+    # Function Name : pid_tune_throttle_callback
+    # input         : PidTune improted in script frome pid msgs
+    # Output        : void
+    # Logic         : saves slider value for throttle whenever the Swift Message publishes the Kp , Ki , Kd
+    # example       : call Automatically called when pid msgs are published  
+    def pid_tune_throttle_callback(self, msg):
+        #gets the Kp,Ki,Kd for throttle
+        self.Kp[2] = msg.kp * 0.01
+        self.Ki[2] = msg.ki * 0.0001
+        self.Kd[2] = msg.kd * 0.1
+
+
+    # Function Name : pid_tune_roll_callback
+    # input         : PidTune improted in script frome pid msgs
+    # Output        : void
+    # Logic         : saves slider value for roll whenever the Swift Message publishes the Kp , Ki , Kd
+    # example       :call Automatically called when pid msgs are published   
+    def pid_tune_roll_callback(self, msg):
+        #gets the Kp,Ki,Kd for roll
+        self.Kp[1] = msg.kp * 0.01
+        self.Ki[1] = msg.ki * 0.0001
+        self.Kd[1] = msg.kd * 0.1
+
+
+    # Function Name : pid_tune_pitch_callback
+    # input         : PidTune improted in script frome pid msgs
+    # Output        : void
+    # Logic         : saves slider value for pitch whenever the Swift Message publishes the Kp , Ki , Kd
+    # example       : call Automatically called when pid msgs are published  
+    def pid_tune_pitch_callback(self, msg):
+        #gets the Kp,Ki,Kd for pitch
+        self.Kp[0] = msg.kp * 0.01
+        self.Ki[0] = msg.ki * 0.0001
+        self.Kd[0] = msg.kd * 0.1
+
+
+    # Function Name : check
+    # input         : cal_value :calculated by pid function , max_value defined globally for roll pitch throttle, min_value defined 
+    #                 globally roll pitch throttle
+    # Output        : calculated value if it is range of max and min value passed 
+    #                 if not returns max value if it exceeds max value 
+    #                 if not it returns min value if it goes below min value
+    # Logic         : keep drone propellers speed in limits
+    # example       : call self.check(self.throttle,MAX_THROTTLE ,MIN_THROTTLE)  
+    def check(self, cal_value, max_value, min_value):
+        #checks and set appropriate limited values according to parameter
+        if cal_value > max_value:
+            return max_value
+        elif cal_value < min_value:
+            return min_value
+        else:
+            return cal_value
+
+
+    # Function Name : saveimg
+    # input         : Image from sensor msg imported in script
+    # Output        : void
+    # Logic         : try to save ros image to opencv image else raises exception 
+    # example       : call Automatically called when sensor msgs publishes image 
+    def saveimg(self,msg):
+        #converts the rosimage to cv2 image
+        try:
+            self.img = self.bridge.imgmsg_to_cv2(msg, "8UC3")
+        except:
+        #raises an exception in faulty condition
+            print("saveimg exception")
+
+
+    # Function Name : detect_alien
+    # input         : CV2 image saved in save image function 
+    # Output        : contours list
+    # Logic         : filter out the image convert it to gray binary threshold and return out the list of contours
+    # example       : self.detect_alien(self.image)        
+    def detect_alien(self,img):
+        # mix the edges with background or in our case it reduces the area of leds if leds are present
+        erosionimg = cv2.erode(img, np.ones((7,7)), iterations=1)
+
+        #convert to gray scale
+        grayimg = cv2.cvtColor(erosionimg, cv2.COLOR_BGR2GRAY)
+
+        #convert to binary threshold  for sharp edges
+        _, thresholdimg = cv2.threshold(grayimg, 180, 255, cv2.THRESH_BINARY)
+
+        #first we reduced the area of leds spot this will spread the leds edges to black background to detect presise contour
+        dilationimg = cv2.dilate(thresholdimg, np.ones((7,7)), iterations=1)
+
+        #find the contours
+        contours = cv2.findContours(dilationimg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        #grab counters
+        contours = imutils.grab_contours(contours)
+
+        #sort contours
+        contours = sorted(contours, key=lambda c: cv2.boundingRect(c)[0])
+
+        #returns the [[Cx1,Cy1], [Cx2,Cy2],....]
+        return contours
+    
+        # Function Name : detect_alien
+    
+
+    # Function Name : centroid_calculator
+    # input         : centroid (x,y) for each extracted from contours 
+    # Output        : centroid lsit contains name of type alien no of leds centroid x and centroid y for image
+    # Logic         : average of all centroid  for x and y 
+    # example       : self.centroid_calculator(self.centroid_list)      
+    def centroid_calculator(self,centroid_list):
+        #centroid_list = [[Cx1,Cy1],[Cx2,Cy2],....]
+        #gets the total no of centroid
+        alien =  (len(centroid_list))
+
+        #sum all Cx in centroid_list
+        sumofx = sum(xcoor for xcoor , _ in centroid_list)
+
+        #sum all Cy in centroid_list
+        sumofy = sum(ycoor for _ , ycoor in centroid_list)
+
+        #averages the Cx
+        centroidx = sumofx/alien
+
+        #averages the Cx
+        centroidy = sumofy/alien
+
+        #depending on no of centroids of each leds we catagorised the type of alien and append the average Cx and Cy 
+        #made a list contains [Type,no of leds, avgCx , avgCy] and append
+        if   alien == 2 :
+            self.centroids.append(['alien_a' , 2 ,centroidx,centroidy])
+        elif alien == 3 :
+            self.centroids.append(['alien_b' , 3 ,centroidx,centroidy])
+        elif alien == 4 :
+            self.centroids.append(['alien_c' , 4 ,centroidx,centroidy])
+        elif alien == 5 :
+            self.centroids.append(['alien_d' , 5 ,centroidx,centroidy])
+    
+        #Type,no of leds, avgCx , avgCy]
+        return self.centroids
+    
+
+    # Function Name : write
+    # input         : contour 
+    # Output        : void
+    # Logic         : extract centroid (X,Y) of each leds from contours make a centroid list and passes to centroid calculator 
+    #                 then we get centroid list which has alien if we have counters i.e is leds count in range 2 to 5 and then
+    #                 publishes the biolocation and also beeps and blink as we have no of leds in centroid list  
+    #                 if we have 4 aliens detected it will go towards the base change the index to endpoint
+    # example       : self.write(total_leds)
+    def write(self,contours,img):
+        print("contours len ",len(contours))
+        #if we have leds counter in range 2 to 5 then it is sure that we have alien cluster and as our height is very low it is a rare case that 2 to 3 led cluster is in one frame
+        #therefore we extract the exact centroid from coutours and make centroid list [[Cx1,Cy1],[Cx2,Cy2],........]
+        if len(contours)<6 and len(contours)>1:
+            for cont in contours:
+                area = cv2.contourArea(cont)
+                M = cv2.moments(cont)
+                if M['m00'] != 0:
+                    cx = float(M['m10'] / M['m00'])
+                    cy = float(M['m01'] / M['m00'])
+                else:
+                    cx, cy = 0, 0
+
+                self.area_list.append(area)
+                self.centroid_list.append((cx , cy))
+
+        #now till this if we have contours we have centroid list
+
+            cv2.drawContours(img, contours, -1, (0, 0, 255), 2)
+        
+        #we increment the alien detected
+            self.alien_count += 1
+
+        #check if all aliens are detected if all detected then self.index will be set to last due to pids issues
+        #we cannot set out drone to boundry as it goes out of whycon camera so we just send nearer to the langing base
+            if(self.alien_count == self.alien_total):
+                self.index = 23
+                self.margin_error = 1
+
+        #as we have centroid_list we calculate all alien type no of leds and avg centroid 
+            centroid_list = self.centroid_calculator(self.centroid_list)
+            print("centroid list ",centroid_list)
+        #saves the name of alien using latest list element 
+            alien_name = self.centroids[self.alien_index][0]
+        
+        #beep the times we have leds in cluster as we have info in the list
+            self.beep_alien(self.centroids[self.alien_index][1])
+        
+        #saves the whycon coordinate by which we get alien cluster
+            centroid_x = self.set_points[0]
+            centroid_y = self.set_points[1]
+        
+        #publsish the biolocation
+            self.bioloc(alien_name)
+        
+        #if in future once again alien centroids list is added  we should get update list of alien
+            self.alien_index +=1
+
+            filename = f"{alien_name}_{centroid_x:.3f}_{centroid_y:.3f}.png"
+            cv2.imwrite(filename, img)
+
+
+    # Function Name : start_stop_notify
+    # input         : time 
+    # Output        : void
+    # Logic         : publishes the rc commands to beep and blink
+    # example       : self.start_stop_notify(2)       
+    def start_stop_notify(self,delay):
+        #saves the aux values for beep and blink added delay accourding to rulebook if we want 2 1 second beep or second beep
+        self.rc_message.aux1 = 1000
+        self.rc_message.aux2 = 1000
+        self.rc_message.aux3 = 1000 
+        self.rc_message.aux4 = 1500
+        self.rc_pub.publish(self.rc_message)
+        time.sleep(delay)
+        self.rc_message.aux3 = 2000
+        self.rc_message.aux4 = 2000
+        self.rc_pub.publish(self.rc_message)             
+        time.sleep(delay)
+        self.rc_message.aux3 = 1000
+        self.rc_message.aux4 = 1000
+        #publishes the rc message
+        self.rc_pub.publish(self.rc_message)
+
+
+    # Function Name : beep_alien
+    # input         : times to beep
+    # Output        : void
+    # Logic         : publishes the rc commands to beep and blink no of times the led are present in alien cluster
+    # example       : self.beep_alien(5) 
+    def beep_alien(self,times):
+        #no of led times we beep and blink and beep
+        for _ in range (times):
+            self.rc_message.aux1 = 1000
+            self.rc_message.aux2 = 1000
+
+            self.rc_message.aux3 = 1000 
+            self.rc_message.aux4 = 1500
+            self.rc_pub.publish(self.rc_message)
+            time.sleep(0.2)
+            self.rc_message.aux3 = 2000
+            self.rc_message.aux4 = 2000
+            self.rc_pub.publish(self.rc_message)             
+            time.sleep(0.2)
+            self.rc_message.aux3 = 1000
+            self.rc_message.aux4 = 1000
+            self.rc_pub.publish(self.rc_message)
+
+
+    # Function Name : bioloc
+    # input         : void
+    # Output        : void
+    # Logic         : publishes the biolocation of alien
+    # example       : self.bioloc()      
+    def bioloc(self,name):
+        #saves name and X,Y,Z coordinates and publishes
+        self.biolocation_msg.organism_type = name
+        self.biolocation_msg.whycon_x = float(self.set_points[0])
+        self.biolocation_msg.whycon_y = float(self.set_points[1])
+        self.biolocation_msg.whycon_z = float(self.set_points[2])
+        self.biolocation_pub.publish(self.biolocation_msg)
+
+
+    # Function Name : pid
+    # input         : void
+    # Output        : void
+    # Logic         : uses PID algorithm if it achives the setpoint it itrates the index of setpoint if reaches it call shutdown hook
+    #                 And publishes the data to rpi and also publishes the pid error
+    # example       : self.pid()   
+    def pid(self):
+        try:
+            #sets the target setpoint to that index member of the setpoints array 
+            self.set_points = self.setpoints[self.index]
+
+            #prints the target setpoint 
+            print("setpoints ",self.set_points)
+
+            #checks if all the whycon positions in each axis is within the margin error 
+            if float(self.drone_whycon_pose_array.poses[0].position.x)> (self.set_points[0] - self.margin_error) and float(self.drone_whycon_pose_array.poses[0].position.x) < (self.set_points[0] + self.margin_error) :
+                if float(self.drone_whycon_pose_array.poses[0].position.y) > (self.set_points[1] - self.margin_error) and float(self.drone_whycon_pose_array.poses[0].position.y)< (self.set_points[1] + self.margin_error) :                
+                    if float(self.drone_whycon_pose_array.poses[0].position.z) > (self.set_points[2] - self.margin_error) and float(self.drone_whycon_pose_array.poses[0].position.z) < (self.set_points[2] + self.margin_error) :
+                        
+                        #stores the contours in a variable totalLeds
+                        totalLeds = self.detect_alien(self.img)
+
+                        #executes the write function for the given number of leds and the cv2 image 
+                        self.write(totalLeds,self.img)
+
+                        #iterates the index after write function for the next setpoint 
+                        self.index += 1
+
+                        #checks if we have reached the end of the setpoints array
+                    if self.index >= len(self.setpoints):
+
+                        #if yes, calls the shutdown service 
+                        self.shutdown_hook()
+
+
+
+            #calculates the errors in X,Y,Z axes and stores in the error array 
+            self.error[0] = (-(float(self.drone_whycon_pose_array.poses[0].position.x) - self.set_points[0]))
+            self.error[1] = (float(self.drone_whycon_pose_array.poses[0].position.y) - self.set_points[1])
+            self.error[2] = (float(self.drone_whycon_pose_array.poses[0].position.z) - self.set_points[2])
+            print("self.error" , self.error)
+
+            #calculates the differential errors in the X,Y,Z axes 
+            self.differential_error[0] = self.error[0] - self.prev_error[0]
+            self.differential_error[1] = self.error[1] - self.prev_error[1]
+            self.differential_error[2] = self.error[2] - self.prev_error[2]
+
+            #calculates the sum of errors in the X,Y,Z axes 
+            self.sum_error[0] = self.sum_error[0] + self.error[0]
+            self.sum_error[1] = self.sum_error[1] + self.error[1]
+            self.sum_error[2] = self.sum_error[2] + self.error[2]
+
+            #calculates the value of ROLL and checks if it is within the limits of it's MAXIMUM and MINIMUM. Stores in a variable to publish to the Raspberry Pi 
+            self.rc_message.rc_roll = int(1500 + self.error[0]*self.Kp[0] + self.differential_error[0]*self.Kd[0]+ self.sum_error[0]*self.Ki[0])
+            self.rc_message.rc_roll = self.check(self.rc_message.rc_roll , MAX_ROLL , MIN_ROLL)
+            
+            #calculates the value of PITCH and checks if it is within the limits of it's MAXIMUM and MINIMUM. Stores in a variable to publish to the Raspberry Pi 
+            self.rc_message.rc_pitch = int(1500 + self.error[1]*self.Kp[1] + self.differential_error[1]*self.Kd[1] + self.sum_error[1]*self.Ki[1])
+            self.rc_message.rc_pitch = self.check(self.rc_message.rc_pitch , MAX_PITCH , MIN_PITCH)
+
+            #calculates the value of THROTTLE and checks if it is within the limits of it's MAXIMUM and MINIMUM. Stores in variable to publish to the Raspberry Pi
+            self.rc_message.rc_throttle = int(1450 + self.error[2]*self.Kp[2] + self.differential_error[2]*self.Kd[2] + self.sum_error[2]*self.Ki[2])
+            self.rc_message.rc_throttle = self.check(self.rc_message.rc_throttle , MAX_THROTTLE , MIN_THROTTLE)
+        
+        #handles exception if occurs 
+        except Exception as err:
+            print(err)
+
+        #sends message to Raspberry Pi for adjusting the ROLL, PITCH, THROTTLE values 
+        self.publish_data_to_rpi( self.rc_message.rc_roll, self.rc_message.rc_pitch, self.rc_message.rc_throttle)
+        
+        #stores previous errors in the X,Y,Z axes
+        self.prev_error[0]=self.error[0]
+        self.prev_error[1]=self.error[1]
+        self.prev_error[2]=self.error[2]
+        
+        #publishes the PID error
+        self.pid_error_pub.publish(
+            PIDError(
+                roll_error=float(self.error[0]),
+                pitch_error=float(self.error[1]),
+                throttle_error=float(self.error[2]),
+                yaw_error=-0.0,
+                zero_error=0.0,
+            )
+        )
+
+
+    # Function Name : publish_data_to_rpi
+    # input         : roll, pitch, throttle
+    # Output        : void
+    # Logic         : use filter and publishes rc_command to rpi
+    # example       : self.publish_data_to_rpi(roll, pitch, throttle)
+    def publish_data_to_rpi(self, roll, pitch, throttle):
+        #converts the ROLL, PITCH, THROTTLE values to integer 
+        self.rc_message.rc_throttle = int(throttle)
+        self.rc_message.rc_roll = int(roll)
+        self.rc_message.rc_pitch = int(pitch)
+        self.rc_message.rc_yaw = int(1500)
+
+        #BUTTERWORTH FILTER
+        span = 15
+        for index, val in enumerate([roll, pitch, throttle]):
+            DRONE_WHYCON_POSE[index].append(val)
+            if len(DRONE_WHYCON_POSE[index]) == span:
+                DRONE_WHYCON_POSE[index].pop(0)
+            if len(DRONE_WHYCON_POSE[index]) != span-1:
+                return
+            order = 3
+            fs = 60
+            fc = 5
+            nyq = 0.5 * fs
+            wc = fc / nyq
+            b, a = scipy.signal.butter(N=order, Wn=wc, btype='lowpass', analog=False, output='ba')
+            filtered_signal = scipy.signal.lfilter(b, a, DRONE_WHYCON_POSE[index])
+            if index == 0:
+                self.rc_message.rc_roll = int(filtered_signal[-1])
+            elif index == 1:
+                self.rc_message.rc_pitch = int(filtered_signal[-1])
+            elif index == 2:
+                 self.rc_message.rc_throttle = int(filtered_signal[-1])
+
+        #checks if the rc.roll has exceeded the limits. If yes, sets them to the maximum or minimum value accordingly
+        if self.rc_message.rc_roll > MAX_ROLL:
+            self.rc_message.rc_roll = MAX_ROLL
+        elif self.rc_message.rc_roll < MIN_ROLL:
+            self.rc_message.rc_roll = MIN_ROLL
+
+        #checks if the rc.pitch has exceeded the limits. If yes, sets them to the maximum or minimum value accordingly
+        elif self.rc_message.rc_pitch > MAX_PITCH:
+            self.rc_message.rc_pitch = MAX_PITCH
+        elif self.rc_message.rc_pitch < MIN_PITCH:
+            self.rc_message.rc_pitch = MIN_PITCH
+
+        #checks if the rc.throttle has exceeded the limits. If yes, sets them to the maximum or minimum value accordingly
+        elif self.rc_message.rc_throttle > MAX_THROTTLE:
+            self.rc_message.rc_throttle = MAX_THROTTLE
+        elif self.rc_message.rc_throttle < MIN_THROTTLE:
+            self.rc_message.rc_throttle = MIN_THROTTLE
+
+        #publishes rc_message to Raspberry Pi that contains the all the calculated ROLL, PITCH, THROTTLE values 
+        self.rc_pub.publish(self.rc_message)
+
+
+    # Function Name : shutdown_hook
+    # input         : void
+    # Output        : void
+    # Logic         : get called when any critical exception occurs and disarms
+    # example       : self.shutdown_hook()  
+    def shutdown_hook(self):
+        #disarms the drone 
+        self.node.get_logger().info("Calling shutdown hook")
+        self.disarm()
+
+
+    # Function Name : arm
+    # input         : void
+    # Output        : void
+    # Logic         : arms the drone
+    # example       : self.arm()  
+    def arm(self):
+        #arms the drone 
+        self.node.get_logger().info("Calling arm service")
+        self.commandbool.value = True
+        self.future = self.arming_service_client.call_async(self.commandbool)
+
+
+    # Function Name : disarm
+    # input         : void
+    # Output        : void
+    # Logic         : disarms the drone and notify using blink and beep
+    # example       : self.disarm()  
+    def disarm(self):
+        #gradually decreases speed and disarms drone 
+        print("disarming")
+        throttle = int(self.rc_message.rc_throttle)  
+        while throttle >=5 :
+            throttle = throttle - 100
+            self.publish_data_to_rpi( 1500, 1500, round(throttle) )
+            time.sleep(0.8)
+            print("throttle ",throttle)
+            if throttle <500:
+                self.node.get_logger().info("Calling disarm service")
+                self.commandbool.value = False
+                self.future = self.arming_service_client.call_async(self.commandbool)
+
+        #notifies drone is disarmed 
+        self.start_stop_notify(2)
+
+
+
+
+# Function Name : main
+# input         : void
+# Output        : void
+# Logic         : creates a ros node creates a controller arms the drone contineously moniter pid 
+# example       : self.main()
+             
+def main(args=None):
+    #initializes the ROS
+    rclpy.init(args=args)
+
+    #initializes the ROS node
+    node = rclpy.create_node('controller')
+    node.get_logger().info(f"Node Started")
+    node.get_logger().info("Entering PID controller loop")
+
+    #creates an instance of the DroneController class 
+    controller = DroneController(node)
+
+    #arms the drone 
+    controller.arm()
+    node.get_logger().info("Armed")
+
+    #continuously monitors the PID when the Master ROS node is active
+    try:
+        while rclpy.ok():
+            controller.pid()
+            if node.get_clock().now().to_msg().sec - controller.last_whycon_pose_received_at > 1:
+                node.get_logger().error("Unable to detect WHYCON poses")
+            rclpy.spin_once(node) # Sleep for 1/30 secs        
+
+    except Exception as err:
+        print(err)
+
+    finally:
+        #disarms the drone 
+        controller.shutdown_hook()
+
+        #destroys the ROS node 
+        node.destroy_node()
+
+        #closes the node
+        rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()

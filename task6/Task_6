@@ -87,7 +87,7 @@ class DroneController():
         #declaring the Kp , Ki , Kd gains in [roll,pitch,throttle] axes 
         self.Kp = [1.5       , 1.5        , 2.5   ]
         self.Ki = [63*0.0001 , 63*0.0001  , 0.0401]
-        self.Kd = [160       , 160        , 168.1 ]
+        self.Kd = [300      , 300        , 168.1 ]
 
         #declaring the required variables for image processing
         #saves [[Cx1,Cy1],[Cx2,Cy2],........] in format where Cx and Cy are centroids of all leds
@@ -103,7 +103,7 @@ class DroneController():
         self.alien_count = 0
 
         #saves the max alien in arena to be detected
-        self.alien_total = 4
+        self.alien_total = 2
 
         #saves the latest index of alien so can publish the latest alien type in centroids list
         self.alien_index = 0
@@ -556,7 +556,7 @@ class DroneController():
     def shutdown_hook(self):
         #disarms the drone 
         self.node.get_logger().info("Calling shutdown hook")
-        #self.disarm()
+        self.disarm()
 
 
     # Function Name : arm

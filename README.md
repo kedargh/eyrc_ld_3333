@@ -135,9 +135,6 @@ if __name__ == '__main__':
 ```
 
 
-## License
-If your project has a license, include the license information here.
-
 ## Contact
 If you have any questions, feel free to contact me at [kedarkenjalkar@gmail.com].
 

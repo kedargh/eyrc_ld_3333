@@ -3,11 +3,6 @@
 ## Description
 This is ROS server for controlling the quad drone and perform computer vision tasks while in flight.
 
-## Features
-- Feature 1
-- Feature 2
-- Feature 3
-
 ## Installation
 Instructions on how to install and set up the project.
 

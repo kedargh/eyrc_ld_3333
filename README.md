@@ -1,7 +1,7 @@
 # eyrc_ld_3333
 
 ## Description
-A brief description of what your project does and its purpose.
+This is ROS server for controlling the quad drone and perform computer vision tasks while in flight.
 
 ## Features
 - Feature 1
@@ -14,28 +14,6 @@ Instructions on how to install and set up the project.
 ```bash
 # Clone the repository
 git clone https://github.com/kedargh/eyrc_ld_3333.git
-
-# Navigate to the project directory
-cd eyrc_ld_3333
-
-# Install dependencies (if any)
-pip install -r requirements.txt
-```
-
-## Usage
-Instructions on how to use the project.
-
-```bash
-# Example command to run the project
-python main.py
-```
-
-## Prerequisites
-List of prerequisites and dependencies.
-
-- Python 3.x
-- Dependency 1
-- Dependency 2
 
 ## Documentation
 

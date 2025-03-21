@@ -148,7 +148,7 @@ Guidelines for contributing to the project.
 If your project has a license, include the license information here.
 
 ## Contact
-If you have any questions, feel free to contact me at [your-email@example.com].
+If you have any questions, feel free to contact me at [kedarkenjalkar@gmail.com].
 
 ## Acknowledgments
-Acknowledge any resources, contributors, or inspiration for your project.
+Contributors other than me - Aditya Khode [https://www.linkedin.com/in/adityakhode10/]

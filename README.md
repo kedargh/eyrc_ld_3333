@@ -1,7 +1,7 @@
 # eyrc_ld_3333
 
 ## Description
-This is ROS server for controlling the quad drone and perform computer vision tasks while in flight.
+- This is ROS server for controlling the quad drone and perform computer vision tasks while in flight.
 
 ## Installation
 Instructions on how to install and set up the project.
@@ -9,7 +9,7 @@ Instructions on how to install and set up the project.
 ```bash
 # Clone the repository
 git clone https://github.com/kedargh/eyrc_ld_3333.git
-
+```
 ## Documentation
 
 ### Task 5: Waypoint Controller
@@ -136,7 +136,7 @@ if __name__ == '__main__':
 
 
 ## Contact
-If you have any questions, feel free to contact me at [kedarkenjalkar@gmail.com].
+If you have any questions, feel free to contact me at [e-Mail](kedarkenjalkar@gmail.com)
 
 ## Acknowledgments
-Contributors other than me - Aditya Khode [https://www.linkedin.com/in/adityakhode10/]
+Team Lead - `Aditya Khode` [Linkedin](https://www.linkedin.com/in/adityakhode10/), [e-mail](khodeaditya7@gmail.com)
